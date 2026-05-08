@@ -59,7 +59,8 @@ TRUCKCLAW1:              request_id tr_xxxxxxxx commit 완료.
              ▼                        ▼
 ┌────────────────────────────────────────────────────────┐
 │              Bridge Server (port 18801)                 │
-│  pending → accepted → committed → merging → complete   │
+│ pending → accepted → committed → merging → carla_complete │
+│ failure: trigger_failed / merge_failed, readiness: ready/not_ready │
 │                    │                                    │
 │             commit 감지 시                              │
 │         POST :18802/start_merge  ──────────────────────┼──→ CARLA 시나리오
@@ -96,18 +97,22 @@ TRUCKCLAW1:              request_id tr_xxxxxxxx commit 완료.
 ### 2단계 — 물리 합류 (CARLA)
 
 1. Bridge Server가 commit 감지 → `POST :18802/start_merge` 자동 전송
-2. CARLA 시나리오가 트리거 수신 → 어프로치 시작 (속도 65 km/h)
-3. 두 군집이 나란히 정렬 → P2 tail 분리
-4. 갭 확보 (TARGET_GAP = 6m)
-5. 차선 변경 (lane=-5 → lane=-4 → lane=-3, 2단계)
-6. P1 tail 뒤에 합류 (CACC 추종)
-7. Bridge Server에 `carla_complete` 보고
+2. CARLA 시나리오가 트리거 수신 전 bridge preflight로 `platoon_a_truck2: platoon_a → platoon_b` 확인
+3. CARLA가 `/readiness`로 정렬/간격/방향 상태를 bridge에 주기적으로 보고
+4. 두 군집이 나란히 정렬 → P1/Platoon A tail 분리
+5. 갭 확보 (TARGET_GAP = 6m)
+6. 차선 변경 (P1 lane → P2 lane)
+7. P2/Platoon B tail 뒤에 합류 (CACC 추종)
+8. Bridge Server에 `carla_complete` 보고 후 논리 membership 이동
 
 ### 이송 상태 머신
 
 ```
 pending → accepted → committed → merging → carla_complete
   ↑요청생성   ↑B수락     ↑B커밋      ↑CARLA시작   ↑물리합류완료
+
+trigger_failed: bridge가 CARLA trigger server 호출 실패
+merge_failed: CARLA readiness timeout 또는 물리 합류 실패
 ```
 
 ---
@@ -208,11 +213,14 @@ Discord 채널에서 아무 봇에게 입력:
 | 엔드포인트 | 설명 |
 |------------|------|
 | `GET /snapshot` | 전체 상태 조회 |
+| `GET /readiness` | CARLA 물리 합류 준비 상태 조회 |
+| `POST /readiness` | CARLA가 정렬/거리/방향/ready 여부 보고 |
 | `POST /transfers` | transfer 요청 생성 |
 | `POST /transfers/{id}/accept` | 수락 |
 | `POST /transfers/{id}/commit` | 커밋 (→ CARLA 트리거 자동 발송) |
 | `POST /transfers/{id}/merging` | CARLA 합류 시작 보고 |
 | `POST /transfers/{id}/carla_complete` | 물리 합류 완료 보고 |
+| `POST /transfers/{id}/failed` | CARLA 물리 합류 실패/timeout 보고 |
 
 ### 브리지 초기화
 

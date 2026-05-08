@@ -236,7 +236,7 @@ class MergeManager:
 
     def _resolve_lc_dir(self):
         """
-        Determine which direction (True=left, False=right) leads toward V2's lane.
+        Determine which direction (True=right, False=left) leads toward V2's lane.
         Uses lateral offset of V2 relative to V3 — not lane_id comparison,
         which breaks across road segments with different road_id.
         """
@@ -252,18 +252,9 @@ class MergeManager:
         diff    = np.array([v2_loc.x - v3_loc.x, v2_loc.y - v3_loc.y])
         lateral = float(np.dot(diff, right_vec))
 
-        direction = lateral < 0   # True = left, False = right
-        side = "LEFT" if direction else "RIGHT"
+        direction = lateral > 0   # CARLA TrafficManager: True=right, False=left
+        side = "RIGHT" if direction else "LEFT"
         print(f"    [LC dir] lateral={lateral:.1f}m → {side}")
-
-        # sanity-check: confirm an adjacent driving lane actually exists that way
-        wpt   = self._map.get_waypoint(v3_loc)
-        check = wpt.get_left_lane() if direction else wpt.get_right_lane()
-        if check is None or check.lane_type != carla.LaneType.Driving:
-            # no driving lane that way — try opposite
-            direction = not direction
-            side = "LEFT" if direction else "RIGHT"
-            print(f"    [LC dir] no driving lane, flipping to {side}")
 
         return direction
 

@@ -1,4 +1,13 @@
 services:
+  bridge-server:
+    image: python:3.10-slim
+    container_name: platoon-bridge-server
+    volumes:
+      - ./bridge:/bridge:ro
+    command: python3 /bridge/platoon_bridge_server.py
+    network_mode: host
+    restart: unless-stopped
+
   openclaw-platoon-a:
     image: ${OPENCLAW_IMAGE:-openclaw:local}
     container_name: openclaw-platoon-a

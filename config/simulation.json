@@ -1,0 +1,36 @@
+{
+  "speeds": {
+    "sync_speed_kmh": 20.0,
+    "post_merge_speed_kmh": 50.0,
+    "approach_fast_kmh": 65.0,
+    "open_gap_delta_kmh": 6.0,
+    "lane_change_boost_kmh": 10.0,
+    "catchup_kmh": 18.0,
+    "merge_min_speed_kmh": 15.0
+  },
+  "gaps": {
+    "target_gap_m": 6.0,
+    "follow_dist_m": 13.0,
+    "platoon_spacing_m": 16.0,
+    "merge_distance_limit_m": 55.0,
+    "lane_center_tolerance_m": 2.0
+  },
+  "timeouts": {
+    "merge_timeout_s": 120.0,
+    "bridge_poll_ticks": 50
+  },
+  "spawns": {
+    "p1_spawn": {
+      "x": 81.0, "y": 136.0, "z": 0.3,
+      "pitch": 0.0, "yaw": 0.2, "roll": 0.0
+    },
+    "p2_spawn": {
+      "x": 21.0, "y": 143.0, "z": 0.3,
+      "pitch": 0.0, "yaw": 0.2, "roll": 0.0
+    }
+  },
+  "destinations": {
+    "dest_a": {"x": 599.1, "y": 241.2, "z": 0.0},
+    "dest_b": {"x": 480.3, "y": 41.7, "z": 0.0}
+  }
+}

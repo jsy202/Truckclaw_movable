@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000">
+  <defs>
+    <style>
+      .bg { fill: #f6f2ea; }
+      .road { fill: none; stroke: #4f5351; stroke-width: 34; stroke-linecap: round; stroke-linejoin: round; }
+      .road-inner { fill: none; stroke: #6c716e; stroke-width: 18; stroke-linecap: round; stroke-linejoin: round; opacity: 0.9; }
+      .label-box { fill: #ffffff; stroke-width: 3; rx: 10; ry: 10; }
+      .label { font: 700 34px "DejaVu Sans", sans-serif; }
+      .title { font: 700 40px "DejaVu Sans", sans-serif; fill: #1c1c1c; }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="1000"/>
+
+  <!-- Outer loop -->
+  <rect class="road" x="110" y="215" width="1380" height="470" rx="88" ry="88"/>
+  <rect class="road-inner" x="110" y="215" width="1380" height="470" rx="88" ry="88"/>
+
+  <!-- Upper-left inner loop -->
+  <rect class="road" x="250" y="355" width="340" height="125" rx="60" ry="60"/>
+  <rect class="road-inner" x="250" y="355" width="340" height="125" rx="60" ry="60"/>
+
+  <!-- Lower-left inner loop -->
+  <rect class="road" x="325" y="535" width="420" height="95" rx="46" ry="46"/>
+  <rect class="road-inner" x="325" y="535" width="420" height="95" rx="46" ry="46"/>
+
+  <!-- Vertical spine -->
+  <path class="road" d="M 600 120 L 600 780"/>
+  <path class="road-inner" d="M 600 120 L 600 780"/>
+
+  <!-- Upper bulb -->
+  <path class="road" d="M 600 120 C 560 120 548 154 560 182 C 575 216 575 244 575 286 L 625 286 C 625 244 625 216 640 182 C 652 154 640 120 600 120"/>
+  <path class="road-inner" d="M 600 120 C 560 120 548 154 560 182 C 575 216 575 244 575 286 L 625 286 C 625 244 625 216 640 182 C 652 154 640 120 600 120"/>
+
+  <!-- Lower bulb -->
+  <path class="road" d="M 600 780 C 560 780 548 746 560 718 C 575 684 575 656 575 614 L 625 614 C 625 656 625 684 640 718 C 652 746 640 780 600 780"/>
+  <path class="road-inner" d="M 600 780 C 560 780 548 746 560 718 C 575 684 575 656 575 614 L 625 614 C 625 656 625 684 640 718 C 652 746 640 780 600 780"/>
+
+  <!-- Upper branch diverging to top route -->
+  <path class="road" d="M 760 355 C 855 355 910 365 975 450 C 1015 500 1085 510 1180 510"/>
+  <path class="road-inner" d="M 760 355 C 855 355 910 365 975 450 C 1015 500 1085 510 1180 510"/>
+
+  <!-- Lower branch diverging to bottom route -->
+  <path class="road" d="M 760 480 C 860 485 920 540 980 605 C 1020 650 1090 655 1180 655"/>
+  <path class="road-inner" d="M 760 480 C 860 485 920 540 980 605 C 1020 650 1090 655 1180 655"/>
+
+  <!-- Reference corridor center line feel -->
+  <path d="M 720 430 L 1260 430" stroke="#7b817e" stroke-width="8" stroke-linecap="round" opacity="0.45"/>
+
+  <!-- Points only -->
+  <circle cx="720" cy="442" r="18" fill="#ef5350" stroke="#111111" stroke-width="3"/>
+  <circle cx="635" cy="430" r="18" fill="#3498db" stroke="#111111" stroke-width="3"/>
+  <circle cx="1390" cy="282" r="20" fill="#2eaf4a" stroke="#111111" stroke-width="3"/>
+  <circle cx="1390" cy="595" r="20" fill="#2f7dd1" stroke="#111111" stroke-width="3"/>
+
+  <!-- Minimal labels -->
+  <rect class="label-box" x="730" y="386" width="62" height="48" stroke="#ef5350"/>
+  <text class="label" x="745" y="420" fill="#ef5350">A</text>
+
+  <rect class="label-box" x="647" y="374" width="62" height="48" stroke="#3498db"/>
+  <text class="label" x="658" y="408" fill="#3498db">B</text>
+
+  <rect class="label-box" x="1408" y="238" width="108" height="52" stroke="#2eaf4a"/>
+  <text class="label" x="1424" y="274" fill="#2eaf4a">D_A</text>
+
+  <rect class="label-box" x="1408" y="603" width="108" height="52" stroke="#2f7dd1"/>
+  <text class="label" x="1424" y="639" fill="#2f7dd1">D_B</text>
+
+  <text class="title" x="800" y="930" text-anchor="middle">Town06 Schematic Destination Points</text>
+</svg>

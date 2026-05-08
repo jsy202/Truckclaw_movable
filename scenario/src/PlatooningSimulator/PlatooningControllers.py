@@ -112,10 +112,13 @@ class FollowerController(LowLevelController):
         Returns:
             Carla.VehicleControl with the appropriate control values
         """
-        # find next waypoint
+        # find next waypoint — threshold 8 m accounts for truck wheelbase/overhang
+        # (5 m was too tight: the rear axle of a long truck can still be 7+ m from
+        # a waypoint that the front bumper already passed, causing the deque to
+        # under-consume and the follower to steer toward stale behind-the-vehicle targets)
         _passed = 0
         for i, wp in enumerate(lead_waypoints):
-            if self._vehicle.get_location().distance(wp.transform.location) < 5:
+            if self._vehicle.get_location().distance(wp.transform.location) < 8:
                 _passed = max(_passed, i + 1)
 
         # last vehicle removes waypoints that it passes
@@ -183,24 +186,32 @@ class LeadNavigator(LowLevelController):
         self.target_speed = target_speed
         return self.target_speed
 
+    @staticmethod
+    def _yaw_diff(yaw_a, yaw_ref):
+        """Smallest signed yaw difference in [0, 180]."""
+        return abs((yaw_a - yaw_ref + 180.0) % 360.0 - 180.0)
+
     def find_waypoints_ahead(self):
         """Find waypoints ahead in the current lane. These are then followed until the end of the lane."""
         next_wpts = self.waypoints_ahead[-1].next(5.0)
         driving_direction = self.waypoints_ahead[-1].transform.rotation.yaw
         if len(next_wpts) == 0:
             return "No waypoints found"
-        elif len(next_wpts) > 0:
-            wpt = min(next_wpts, key=lambda x: np.abs(x.transform.rotation.yaw-driving_direction) % 360)
-        else:
-            return "No waypoints found"
+
+        # Use correct yaw wrap-around normalization; the old formula
+        # (abs(diff) % 360) gives 358 instead of 2 when crossing 0°/360°.
+        wpt = min(next_wpts, key=lambda x: self._yaw_diff(x.transform.rotation.yaw, driving_direction))
 
         if wpt.is_junction:
             junction_wpt_pairs = wpt.get_junction().get_waypoints(carla.LaneType.Driving)
             junction_wpts_1 = [w[0] for w in junction_wpt_pairs]
             junction_wpts_2 = [w[1] for w in junction_wpt_pairs]
-            wpt_1 = min(junction_wpts_1, key=lambda x: np.abs(x.transform.rotation.yaw-driving_direction) % 360)
-            wpt_2 = min(junction_wpts_2, key=lambda x: np.abs(x.transform.rotation.yaw-driving_direction) % 360)
-            wpt = max(wpt_1, wpt_2, key=lambda x: x.transform.location.distance(self.waypoints_ahead[-1].transform.location))
+            wpt_1 = min(junction_wpts_1, key=lambda x: self._yaw_diff(x.transform.rotation.yaw, driving_direction))
+            wpt_2 = min(junction_wpts_2, key=lambda x: self._yaw_diff(x.transform.rotation.yaw, driving_direction))
+            # Pick exit with minimum yaw deviation (straight-ahead), not maximum
+            # distance from last waypoint — the old max-distance heuristic
+            # selected off-ramps instead of the highway continuation.
+            wpt = min(wpt_1, wpt_2, key=lambda x: self._yaw_diff(x.transform.rotation.yaw, driving_direction))
 
         self.waypoints_ahead.append(wpt)
 

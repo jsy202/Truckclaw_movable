@@ -3,23 +3,36 @@
   "map": "Town06",
   "discord_channel": "platoon-transfer",
   "bot_name": "openclaw-platoon-b",
+  "bot_display_name": "TRUCKCLAW1",
   "platoon_id": "platoon_b",
+  "role": "responder",
+  "bridge": {
+    "base_url": "http://127.0.0.1:18801",
+    "cli": "/project/scripts/platoon_bridge_ctl.py",
+    "carla_trigger_url": "http://127.0.0.1:18802/start_merge",
+    "carla_trigger_owner": "bridge"
+  },
+  "discord": {
+    "channel": "platoon-transfer",
+    "self_mention": "<@1479297098938585170>",
+    "peer_mention": "<@1479297673432399923>"
+  },
   "destinations": {
     "dest_a": {
-      "label": "Highway Lane -3",
-      "description": "road=37 lane=-3 (y\u2248137) \u2014 \ub3d9\ucabd \ubcf8\uc120 \uc88c\uce21 \ucc28\uc120 \uacc4\uc18d \uc8fc\ud589",
+      "label": "Upper Side Road",
+      "description": "road=71 lane=-4 (x\u2248599, y\u2248241) \u2014 \uc6b0\uce21 \uc0c1\ub2e8 side road \ubd84\uae30",
       "location": {
-        "x": 600.0,
-        "y": 137.0,
+        "x": 599.1,
+        "y": 241.2,
         "z": 0.0
       }
     },
     "dest_b": {
-      "label": "Highway Lane -5",
-      "description": "road=37 lane=-5 (y\u2248144) \u2014 \ub3d9\ucabd \ubcf8\uc120 \uc6b0\uce21 \ucc28\uc120 \uacc4\uc18d \uc8fc\ud589",
+      "label": "Lower Side Road",
+      "description": "road=1083 lane=-4 (x\u2248480, y\u224842) \u2014 \uc6b0\uce21 \ud558\ub2e8 side road \ubd84\uae30",
       "location": {
-        "x": 600.0,
-        "y": 144.0,
+        "x": 480.3,
+        "y": 41.7,
         "z": 0.0
       }
     }
@@ -36,7 +49,10 @@
   },
   "peer_platoon": {
     "platoon_id": "platoon_a",
-    "leader_vehicle_id": "platoon_a_truck0"
+    "leader_vehicle_id": "platoon_a_truck0",
+    "bot_name": "openclaw-platoon-a",
+    "bot_display_name": "TRUCKCLAW2",
+    "destination_id": "dest_a"
   },
   "own_vehicles": [
     {

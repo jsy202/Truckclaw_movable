@@ -2,14 +2,14 @@
 Two-platoon truck transfer scenario  –  CARLA Town06
 ====================================================
 
-  P1  Receiver platoon : 3 trucks, TM lead + CACC followers
-  P2  Donor platoon    : 3 trucks, TM lead + CACC followers
+  P1  Donor platoon    : 3 trucks, TM lead + CACC followers
+  P2  Receiver platoon : 3 trucks, TM lead + CACC followers
 
 Scripted flow:
   1. Two platoons spawn in the same parallel highway corridor with a large longitudinal offset.
   2. Press SPACE to start adaptive rendezvous.
-  3. Once the platoons are aligned and close enough, P2's tail detaches.
-  4. The detached truck opens a safe gap, changes lane, and reattaches behind P1 via CACC.
+  3. Once the platoons are aligned and close enough, P1's tail detaches.
+  4. The detached truck opens a safe gap, changes lane, and reattaches behind P2 via CACC.
   5. Both platoons continue driving until interrupted.
 
 Run:
@@ -32,38 +32,57 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 import carla
 import numpy as np
+from agents.navigation import controller as nav_controller
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 from PlatooningSimulator import Core, PlatooningControllers
 
 
+# ── configuration loading ─────────────────────────────────────────────────────
+CONFIG_FILE = os.path.join(os.path.dirname(__file__), "..", "..", "config", "simulation.json")
+
+def load_sim_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+_cfg = load_sim_config()
+_speeds = _cfg.get("speeds", {})
+_gaps = _cfg.get("gaps", {})
+_timeouts = _cfg.get("timeouts", {})
+_spawns = _cfg.get("spawns", {})
+_dests = _cfg.get("destinations", {})
+
 DT = 0.01
 SAMPLING_RATE = 10
 
 PLATOON_SIZE = 3
-PLATOON_SPACING_M = 16.0
+PLATOON_SPACING_M = _gaps.get("platoon_spacing_m", 16.0)
 
-SYNC_SPEED_KMH = 20.0
-POST_MERGE_SPEED_KMH = 50.0
-OPEN_GAP_DELTA_KMH = 8.0
-LANE_CHANGE_BOOST_KMH = 10.0
-CATCHUP_KMH = 18.0
+SYNC_SPEED_KMH = _speeds.get("sync_speed_kmh", 20.0)
+POST_MERGE_SPEED_KMH = _speeds.get("post_merge_speed_kmh", 50.0)
+OPEN_GAP_DELTA_KMH = _speeds.get("open_gap_delta_kmh", 6.0)
+LANE_CHANGE_BOOST_KMH = _speeds.get("lane_change_boost_kmh", 10.0)
+CATCHUP_KMH = _speeds.get("catchup_kmh", 18.0)
+MERGE_MIN_SPEED_KMH = _speeds.get("merge_min_speed_kmh", 15.0)
 
-TARGET_GAP_M = 6.0
+TARGET_GAP_M = _gaps.get("target_gap_m", 6.0)
 STRAIGHT_M = 10.0
 CONFIRM_TICKS = 8
-FOLLOW_DIST_M = 13.0
+FOLLOW_DIST_M = _gaps.get("follow_dist_m", 13.0)
 TEMP_MERGE_FOLLOW_DIST_M = 6.0
 
 INITIAL_LEAD_OFFSET_M = 60.0
 AUTO_APPROACH_SECS = 2.0
 MIN_TRIGGER_TIME_S = 0.0
-MERGE_OFFSET_MIN_M = TARGET_GAP_M
+MERGE_OFFSET_MIN_M = TARGET_GAP_M - 1.0
 APPROACH_TARGET_OFFSET_M = -10.0
-APPROACH_FAST_KMH = 65.0
-MERGE_DISTANCE_LIMIT_M = 55.0
+APPROACH_FAST_KMH = _speeds.get("approach_fast_kmh", 65.0)
+MERGE_DISTANCE_LIMIT_M = _gaps.get("merge_distance_limit_m", 55.0)
 MERGE_YAW_LIMIT_DEG = 15.0
-LANE_CENTER_TOLERANCE_M = 2.0
+MERGE_TIMEOUT_S = _timeouts.get("merge_timeout_s", 120.0)
+LANE_CENTER_TOLERANCE_M = _gaps.get("lane_center_tolerance_m", 2.0)
 PARALLEL_LOOKAHEAD_M = 800.0
 LOG_MAX_STEPS = 60000
 SHOW_PLOT = False
@@ -73,24 +92,22 @@ CAM_ALPHA = 0.03
 CAM_EVERY = 1
 
 # ── fixed spawn transforms (Town06) ──────────────────────────────────────────
-# road=35 시작점 — fork(x=658)까지 최대 거리 확보
-# 속도 20km/h 기준 P2→fork ≈ 115초 (협상 여유)
-# P1(군집 A): lane=-3 (y≈136.0), 앞쪽
-# P2(군집 B): lane=-5 (y≈143.0), 뒤쪽 60m
+_p1_s = _spawns.get("p1_spawn", {"x": 81.0, "y": 136.0, "z": 0.3, "pitch": 0.0, "yaw": 0.2, "roll": 0.0})
 P1_SPAWN = carla.Transform(
-    carla.Location(x=81.0, y=136.0, z=0.30),
-    carla.Rotation(pitch=0.0, yaw=0.2, roll=0.0),
+    carla.Location(x=_p1_s["x"], y=_p1_s["y"], z=_p1_s["z"]),
+    carla.Rotation(pitch=_p1_s["pitch"], yaw=_p1_s["yaw"], roll=_p1_s["roll"]),
 )
+_p2_s = _spawns.get("p2_spawn", {"x": 21.0, "y": 143.0, "z": 0.3, "pitch": 0.0, "yaw": 0.2, "roll": 0.0})
 P2_SPAWN = carla.Transform(
-    carla.Location(x=21.0, y=143.0, z=0.30),
-    carla.Rotation(pitch=0.0, yaw=0.2, roll=0.0),
+    carla.Location(x=_p2_s["x"], y=_p2_s["y"], z=_p2_s["z"]),
+    carla.Rotation(pitch=_p2_s["pitch"], yaw=_p2_s["yaw"], roll=_p2_s["roll"]),
 )
 
 # ── destination locations (Town06) ───────────────────────────────────────────
-# dest_a: 동쪽 본선 계속 주행 (군집 A 목적지)
-DEST_A = carla.Location(x=550.0, y=137.0, z=0.0)
-# dest_b: 우측 차선 분기 (군집 B 목적지, platoon_a_truck2 이쪽)
-DEST_B = carla.Location(x=550.0, y=144.0, z=0.0)
+_da = _dests.get("dest_a", {"x": 599.1, "y": 241.2, "z": 0.0})
+DEST_A = carla.Location(x=_da["x"], y=_da["y"], z=_da["z"])
+_db = _dests.get("dest_b", {"x": 480.3, "y": 41.7, "z": 0.0})
+DEST_B = carla.Location(x=_db["x"], y=_db["y"], z=_db["z"])
 
 TRUCK_BLUEPRINT_PREFS = [
     "vehicle.carlamotors.european_hgv",
@@ -105,22 +122,75 @@ PLATOON_IDS = ("P1", "P2")
 BRIDGE_URL = "http://127.0.0.1:18801"
 BRIDGE_POLL_TICKS = 50   # poll every 50 sampling ticks ≈ 5 s
 
+def _transfer_matches_scenario(t):
+    """Verify if the bridge transfer matches current simulation entities."""
+    # Allow any vehicle that is currently a tail vehicle in P1/Platoon A
+    return (
+        t.get("from_platoon_id") == "platoon_a" and 
+        t.get("to_platoon_id") == "platoon_b"
+    )
+
+def _bridge_get_ready_transfer(request_id=None):
+    """Return a committed/merging bridge transfer matching this CARLA scenario."""
+    try:
+        with urllib.request.urlopen(f"{BRIDGE_URL}/snapshot", timeout=2) as r:
+            data = json.loads(r.read().decode())
+    except Exception as exc:
+        return None, f"bridge snapshot unavailable: {exc}"
+
+    ready = []
+    for rid, t in data.get("transfers", {}).items():
+        if request_id is not None and rid != request_id:
+            continue
+        if t.get("status") not in ("committed", "merging"):
+            continue
+        if not _transfer_matches_scenario(t):
+            continue
+        ready.append(t)
+
+    if not ready:
+        scope = f" for request_id={request_id}" if request_id else ""
+        return None, f"no committed or merging transfer{scope}"
+    return ready[0], None
+
 # ── trigger server (receives POST /start_merge from OpenClaw bots) ────────────
 TRIGGER_PORT = 18802
 _merge_trigger_event = threading.Event()
+
+
+def _send_trigger_response(handler, code, payload):
+    data = json.dumps(payload).encode("utf-8")
+    handler.send_response(code)
+    handler.send_header("Content-Type", "application/json")
+    handler.send_header("Content-Length", str(len(data)))
+    handler.end_headers()
+    handler.wfile.write(data)
+
+
+def _read_trigger_body(handler):
+    length = int(handler.headers.get("Content-Length", 0))
+    if length == 0:
+        return {}
+    return json.loads(handler.rfile.read(length).decode("utf-8"))
 
 
 def _start_trigger_server():
     class Handler(BaseHTTPRequestHandler):
         def do_POST(self):
             if self.path == "/start_merge":
+                try:
+                    body = _read_trigger_body(self)
+                except json.JSONDecodeError as exc:
+                    return _send_trigger_response(self, 400, {"ok": False, "error": f"invalid JSON body: {exc.msg}"})
+
+                transfer, error = _bridge_get_ready_transfer(body.get("request_id"))
+                if transfer is None:
+                    return _send_trigger_response(self, 409, {"ok": False, "error": error})
+
                 _merge_trigger_event.set()
-                self.send_response(200)
-                self.end_headers()
-                self.wfile.write(b'{"ok": true}')
+                return _send_trigger_response(self, 200, {"ok": True, "request_id": transfer["request_id"]})
             else:
-                self.send_response(404)
-                self.end_headers()
+                return _send_trigger_response(self, 404, {"ok": False, "error": "not found"})
 
         def log_message(self, fmt, *args):
             pass  # suppress access log noise
@@ -133,28 +203,14 @@ def _start_trigger_server():
 
 def _bridge_has_active_transfer():
     """Return True if the bridge server has a transfer ready for CARLA (committed or merging)."""
-    try:
-        with urllib.request.urlopen(f"{BRIDGE_URL}/snapshot", timeout=2) as r:
-            data = json.loads(r.read().decode())
-        return any(
-            t["status"] in ("committed", "merging")
-            for t in data.get("transfers", {}).values()
-        )
-    except Exception:
-        return False
+    transfer, _ = _bridge_get_ready_transfer()
+    return transfer is not None
 
 
 def _bridge_get_committed_request_id():
     """Return the request_id of the first committed-or-merging transfer, or None."""
-    try:
-        with urllib.request.urlopen(f"{BRIDGE_URL}/snapshot", timeout=2) as r:
-            data = json.loads(r.read().decode())
-        for rid, t in data.get("transfers", {}).items():
-            if t["status"] in ("committed", "merging"):
-                return rid
-    except Exception:
-        pass
-    return None
+    transfer, _ = _bridge_get_ready_transfer()
+    return transfer["request_id"] if transfer is not None else None
 
 
 def _bridge_notify(request_id, event):
@@ -170,6 +226,75 @@ def _bridge_notify(request_id, event):
         print(f"[bridge] notified {event} for {request_id}")
     except Exception as e:
         print(f"[bridge] notify {event} failed: {e}")
+
+
+def _bridge_update_readiness(status, merge_ready, reason, request_id=None, metrics=None, vehicle_id=None):
+    payload = {
+        "status": status,
+        "merge_ready": bool(merge_ready),
+        "reason": reason,
+        "request_id": request_id,
+        "vehicle_id": vehicle_id,
+        "metrics": metrics or {},
+    }
+    try:
+        req = urllib.request.Request(
+            f"{BRIDGE_URL}/readiness",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=1)
+    except Exception:
+        pass
+
+
+def _bridge_fail(request_id, reason):
+    if not request_id:
+        return
+    try:
+        req = urllib.request.Request(
+            f"{BRIDGE_URL}/transfers/{request_id}/failed",
+            data=json.dumps({"reason": reason}).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        urllib.request.urlopen(req, timeout=2)
+        print(f"[bridge] notified failed for {request_id}: {reason}")
+    except Exception as e:
+        print(f"[bridge] notify failed failed: {e}")
+
+
+def _auto_bridge_commit(tail_vehicle_id):
+    """Create, accept, and commit a bridge transfer for spacebar-triggered merges."""
+    try:
+        def post(path, body):
+            req = urllib.request.Request(f"{BRIDGE_URL}{path}", data=json.dumps(body).encode("utf-8"), headers={"Content-Type": "application/json"}, method="POST")
+            with urllib.request.urlopen(req, timeout=2) as r: return json.loads(r.read().decode())
+        
+        res = post("/transfers", {"vehicle_id": tail_vehicle_id, "from_platoon_id": "platoon_a", "to_platoon_id": "platoon_b"})
+        rid = res["request_id"]
+        post(f"/transfers/{rid}/accept", {})
+        post(f"/transfers/{rid}/commit", {})
+        print(f"[test] Bridge auto-committed {rid} for {tail_vehicle_id}")
+    except Exception as e:
+        print(f"[test] Auto-commit failed: {e}")
+
+
+def _readiness_reason(approach_started, donor_straight, receiver_straight, lat_adjacent, pair_metrics, time_s):
+    if not approach_started:
+        return "waiting for bridge commit/start_merge trigger"
+    if not lat_adjacent:
+        return "donor and receiver tails are not laterally adjacent"
+    if pair_metrics["distance_m"] > MERGE_DISTANCE_LIMIT_M:
+        return f"distance too large ({pair_metrics['distance_m']:.1f}m)"
+    if pair_metrics["yaw_delta_deg"] > MERGE_YAW_LIMIT_DEG:
+        return f"yaw mismatch too large ({pair_metrics['yaw_delta_deg']:.1f}deg)"
+    if pair_metrics["offset_m"] < MERGE_OFFSET_MIN_M:
+        return f"receiver gap is not open enough ({pair_metrics['offset_m']:.1f}m)"
+    if time_s < MIN_TRIGGER_TIME_S:
+        return "minimum trigger time has not elapsed"
+    return "merge conditions satisfied"
 
 
 def pick_truck_blueprint(bps):
@@ -347,10 +472,12 @@ def _lane_center_spacing_ok(wpt_a, wpt_b):
 
 
 def _vehicles_laterally_adjacent(vehicle_a, vehicle_b, min_lat_m=2.0, max_lat_m=8.0):
-    """True when two vehicles are roughly one lane-width apart laterally.
+    """True when two vehicles are laterally within [min_lat_m, max_lat_m].
 
+    Covers both single-lane (≈3.5 m) and two-lane (≈7 m) separations so the
+    scenario works for a 2-lane change (P1 lane=-3, P2 lane=-5).
     Uses vehicle_a's heading to project the inter-vehicle vector onto the
-    lateral axis.  Avoids road/lane-ID matching which breaks at CARLA
+    lateral axis; avoids road/lane-ID matching which breaks at CARLA
     segment boundaries.
     """
     loc_a = vehicle_a._carla_vehicle.get_location()
@@ -469,13 +596,17 @@ def find_parallel_platoon_spawns(carla_map, spawn_points, clear_m=400.0, history
 
 def v_ref_cacc(predecessor, ego):
     tau = 0.66
-    h = 0.5
+    h = getattr(ego, "h", 0.5)
     c = 2.0
     length = 5.0
     gap = ego.distance_to(predecessor)
     v_pre = predecessor.speed
     v_ego = ego.speed
-    return (tau / h * (v_pre - v_ego + c * (gap - length - h * v_ego)) + v_ego) * 3.6
+    v_ref = (tau / h * (v_pre - v_ego + c * (gap - length - h * v_ego)) + v_ego) * 3.6
+    # Lower bound: never brake below 60% of predecessor speed (prevents full stops
+    # when gap closes briefly).  Upper bound: cap catchup to avoid overshooting.
+    v_pre_kmh = v_pre * 3.6
+    return float(np.clip(v_ref, max(v_pre_kmh * 0.6, 3.0), v_pre_kmh + CATCHUP_KMH * 3))
 
 
 def v_ref_cacc_merge(predecessor, ego):
@@ -604,39 +735,66 @@ class TransferState(Enum):
     LANE_CHANGE = auto()
     FOLLOWING = auto()
     COMPLETE = auto()
+    ABORT = auto()
 
 
 class KeyInput:
-    """Non-blocking single-key reader for Linux terminals."""
+    """Keyboard reader that works in both TTY and non-TTY environments.
+
+    In TTY mode: puts stdin in cbreak so each keypress arrives immediately.
+    In non-TTY mode: a background thread reads lines from stdin; a space or
+    bare newline counts as a SPACE press. The scenario can also be triggered
+    by typing Enter in a pipeline (e.g. ``echo '' | python3 scenario.py``).
+    """
 
     def __init__(self):
-        self._active = False
+        self._tty_active = False
+        self._pending = threading.Event()
+        self._fd = None
+        self._old = None
+
         try:
             self._fd = sys.stdin.fileno()
-            self._old = termios.tcgetattr(self._fd)
-            tty.setcbreak(self._fd)
-            self._active = True
-            print("[keys] Press SPACE to start rendezvous. Ctrl-C to quit.")
-        except termios.error:
-            print("[keys] Not a TTY - press SPACE or send a newline to start rendezvous.")
+            if os.isatty(self._fd):
+                self._old = termios.tcgetattr(self._fd)
+                tty.setcbreak(self._fd)
+                self._tty_active = True
+                print("[keys] Press SPACE to start rendezvous. Ctrl-C to quit.")
+            else:
+                raise termios.error("not a tty")
+        except (termios.error, ValueError):
+            print("[keys] Not a TTY – type SPACE + Enter (or send newline) to start rendezvous.")
+            t = threading.Thread(target=self._stdin_reader, daemon=True)
+            t.start()
 
-    @property
-    def active(self):
-        return self._active
+    def _stdin_reader(self):
+        """Block-read stdin lines; treat space or bare newline as SPACE."""
+        try:
+            for line in sys.stdin:
+                stripped = line.rstrip("\n")
+                if stripped == "" or " " in stripped:
+                    self._pending.set()
+                    return
+        except Exception:
+            pass
 
     def read(self):
-        if not self._active:
+        if self._tty_active:
+            if select.select([sys.stdin], [], [], 0)[0]:
+                ch = sys.stdin.read(1)
+                if ch == "\x03":
+                    self.restore()
+                    raise KeyboardInterrupt
+                return ch
             return ""
-        if select.select([sys.stdin], [], [], 0)[0]:
-            ch = sys.stdin.read(1)
-            if ch == "\x03":
-                self.restore()
-                raise KeyboardInterrupt
-            return ch
+        # non-TTY path: poll the event set by the reader thread
+        if self._pending.is_set():
+            self._pending.clear()
+            return " "
         return ""
 
     def restore(self):
-        if self._active:
+        if self._tty_active and self._fd is not None and self._old is not None:
             termios.tcsetattr(self._fd, termios.TCSADRAIN, self._old)
 
 
@@ -658,6 +816,7 @@ class TailTransferCoordinator:
         self._lc_dir = None
         self._lc_confirm = 0
         self._sample_ticks = 0
+        self._merge_pid = None
 
     def phase_name(self):
         return self.state.name
@@ -678,7 +837,35 @@ class TailTransferCoordinator:
         return self.receiver_platoon[-1]
 
     def _set_speed(self, kmh):
-        self.tm.set_desired_speed(self.detached_vehicle._carla_vehicle, float(max(kmh, 5.0)))
+        self.tm.set_desired_speed(self.detached_vehicle._carla_vehicle, float(max(kmh, MERGE_MIN_SPEED_KMH)))
+
+    def _ensure_merge_pid(self):
+        if self._merge_pid is None:
+            self.detached_vehicle.set_autopilot(False, self.tm_port)
+            self._merge_pid = nav_controller.VehiclePIDController(
+                self.detached_vehicle._carla_vehicle,
+                args_lateral={"K_P": 1.95, "K_I": 0.05, "K_D": 0.2, "dt": DT},
+                args_longitudinal={"K_P": 0.4, "K_I": 0.13, "K_D": 0.086, "dt": DT},
+                max_throttle=1.0,
+                max_brake=0.3,
+                max_steering=0.8,
+            )
+        return self._merge_pid
+
+    def _receiver_lane_target(self, lookahead_m=28.0):
+        """Waypoint ahead of the detached truck, but centered on receiver lane."""
+        receiver_wpt = self._map.get_waypoint(self._receiver_tail()._carla_vehicle.get_location())
+        aligned = _align_reference_waypoint(receiver_wpt, self._behind_offset())
+        if aligned is None:
+            aligned = receiver_wpt
+        target = _advance_waypoint(aligned, lookahead_m)
+        return target if target is not None else aligned
+
+    def _apply_manual_merge_control(self, target_speed_kmh, lookahead_m=28.0):
+        pid = self._ensure_merge_pid()
+        target = self._receiver_lane_target(lookahead_m=lookahead_m)
+        control = pid.run_step(float(max(target_speed_kmh, MERGE_MIN_SPEED_KMH)), target)
+        self.detached_vehicle._carla_vehicle.apply_control(control)
 
     def _is_straight(self, actor, ahead_m=STRAIGHT_M):
         wpt = self._map.get_waypoint(actor.get_location())
@@ -701,107 +888,205 @@ class TailTransferCoordinator:
         diff = np.array([receiver_loc.x - ego_loc.x, receiver_loc.y - ego_loc.y])
         lateral = float(np.dot(diff, right_vec))
 
-        direction = lateral < 0
-        side = "LEFT" if direction else "RIGHT"
+        # CARLA TrafficManager.force_lane_change uses True=right, False=left.
+        # On Town06's negative lane IDs, the receiver can be two physical lanes
+        # away (e.g. -3 -> -5). Keep commanding the geometric direction until
+        # the vehicle reaches the receiver's lane; do not flip just because a
+        # single immediate adjacent lane lookup is missing/non-driving.
+        direction = lateral > 0
+        side = "RIGHT" if direction else "LEFT"
         print(f"    [LC dir] lateral={lateral:.1f}m -> {side}")
-
-        wpt = self._map.get_waypoint(ego_loc)
-        check = wpt.get_left_lane() if direction else wpt.get_right_lane()
-        if check is None or check.lane_type != carla.LaneType.Driving:
-            direction = not direction
-            side = "LEFT" if direction else "RIGHT"
-            print(f"    [LC dir] no driving lane, flipping to {side}")
 
         return direction
 
-    def try_start_transfer(self):
+    def try_start_transfer(self, step=0):
         if self.state != TransferState.CRUISE:
             return False
 
-        donor_tail = self.donor_platoon[-1]
-        if not self._is_straight(donor_tail._carla_vehicle):
-            print("[transfer] Merge request ignored: donor tail is not on a straight section yet.")
+        # Fetch committed transfer from bridge to know WHICH vehicle to move
+        transfer, err = _bridge_get_ready_transfer()
+        if transfer is None:
+            if step % 50 == 0:
+                print(f"[transfer] Waiting for bridge: {err}")
+            return False
+        
+        target_id = transfer["vehicle_id"]
+        # Find the vehicle in the donor platoon
+        donor_idx = -1
+        ids = [v.id for v in self.donor_platoon]
+        for i, v in enumerate(self.donor_platoon):
+            if v.id == target_id:
+                donor_idx = i
+                break
+        
+        if step % 50 == 0:
+            print(f"[debug] Donor Platoon: {ids}, Target: {target_id}, Found Index: {donor_idx}")
+        
+        if donor_idx == -1:
+            if step % 50 == 0:
+                print(f"[transfer] Error: target {target_id} not found in {self.donor_id}")
             return False
 
-        pair_metrics = compute_pair_metrics(self._map, self._receiver_tail(), donor_tail)
-        lat_adj = _vehicles_laterally_adjacent(self._receiver_tail(), donor_tail)
-        if (
-            not lat_adj
-            or pair_metrics["distance_m"] > MERGE_DISTANCE_LIMIT_M
-            or pair_metrics["yaw_delta_deg"] > MERGE_YAW_LIMIT_DEG
-        ):
-            print(
-                "[transfer] Merge request ignored: pair geometry not ready "
-                f"(lat_adj={int(lat_adj)}, "
-                f"distance={pair_metrics['distance_m']:.1f}m, "
-                f"yaw={pair_metrics['yaw_delta_deg']:.1f}deg)."
-            )
+        # Leader handover is now supported by the improved Platoon.split()
+        if donor_idx == 0:
+            print("[transfer] Proceeding with leader handover.")
+
+        # ── Double-Gap logic: Space in front AND behind ──────────────────────
+        REQUIRED_GAP = 20.0
+        
+        # 1. Target vehicle opens gap with its predecessor
+        target_v = self.donor_platoon[donor_idx]
+        ready_front = True
+        gap_front = 0.0
+        if donor_idx > 0:
+            predecessor = self.donor_platoon[donor_idx - 1]
+            gap_front = predecessor.distance_to(target_v)
+            ready_front = gap_front >= REQUIRED_GAP
+            
+            if not ready_front:
+                if getattr(target_v, "h", 0.5) < 3.5:
+                    print(f"\n[split] Target {target_id} opening gap with PREDECESSOR {predecessor.id}.")
+                    target_v.h = 4.0 # Target drifts back
+                elif step % 100 == 0:
+                    print(f"[split] Front gap: {gap_front:.1f}m / {REQUIRED_GAP}m")
+        
+        # 2. Vehicle behind (if any) opens gap with target
+        ready_behind = True
+        if donor_idx < len(self.donor_platoon) - 1:
+            follower_behind = self.donor_platoon[donor_idx + 1]
+            gap_behind = target_v.distance_to(follower_behind)
+            ready_behind = gap_behind >= REQUIRED_GAP
+            if not ready_behind:
+                if getattr(follower_behind, "h", 0.5) < 3.5:
+                    print(f"[split] Successor {follower_behind.id} opening gap with TARGET {target_id}.")
+                    follower_behind.h = 4.0 # Successor drifts back further
+                elif step % 100 == 0:
+                    print(f"[split] Behind gap: {gap_behind:.1f}m / {REQUIRED_GAP}m")
+        
+        if not (ready_front and ready_behind):
+            return False
+
+        # Both gaps ready!
+        print(f"\n[split] Double-gap achieved (Front:{gap_front:.1f}m, Behind:{'N/A' if ready_behind and donor_idx==len(self.donor_platoon)-1 else gap_behind:.1f}m). Proceeding.")
+        
+        # Reset headway for the successor BEFORE it becomes the new follower of the predecessor
+        if donor_idx < len(self.donor_platoon) - 1:
+            self.donor_platoon[donor_idx + 1].h = 0.5 # Prepare to close gap after split
+        
+        donor_target_v = self.donor_platoon[donor_idx]
+        pair_metrics = compute_pair_metrics(self._map, self._receiver_tail(), donor_target_v)
+        lat_adj = _vehicles_laterally_adjacent(self._receiver_tail(), donor_target_v)
+        
+        if not lat_adj:
+            if step % 50 == 0:
+                print(f"[transfer] Waiting: Not laterally adjacent to receiver tail")
+            return False
+        
+        if pair_metrics["distance_m"] > MERGE_DISTANCE_LIMIT_M:
+            if step % 50 == 0:
+                print(f"[transfer] Waiting: Too far from receiver tail ({pair_metrics['distance_m']:.1f}m > {MERGE_DISTANCE_LIMIT_M}m)")
+            return False
+
+        if pair_metrics["yaw_delta_deg"] > MERGE_YAW_LIMIT_DEG:
+            if step % 50 == 0:
+                print(f"[transfer] Waiting: Yaw mismatch ({pair_metrics['yaw_delta_deg']:.1f}deg)")
             return False
 
         set_lead_speed(self.tm, self.receiver_platoon, SYNC_SPEED_KMH)
         set_lead_speed(self.tm, self.donor_platoon, SYNC_SPEED_KMH)
-        self.detached_vehicle = self.donor_platoon.detach_tail_vehicle()
+
+        # Use split() to remove the vehicle at donor_idx. 
+        new_platoons = self.donor_platoon.split(donor_idx, donor_idx)
+        self.detached_vehicle = new_platoons[0][0] # The vehicle is now the leader of its own 1-car platoon
+        
         self.detached_vehicle.attach_controller(None)
         configure_tm_vehicle(self.tm, self.detached_vehicle._carla_vehicle, SYNC_SPEED_KMH)
         self.tm.distance_to_leading_vehicle(self.detached_vehicle._carla_vehicle, TEMP_MERGE_FOLLOW_DIST_M)
         self.detached_vehicle.set_autopilot(True, self.tm_port)
-        print(f"[transfer] Detached {self.donor_id} tail for transfer to {self.receiver_id}")
+        print(f"[transfer] Detached {target_id} from {self.donor_id} for transfer to {self.receiver_id}")
 
+        # Always start LANE_CHANGE immediately – no separate GAP_OPENING phase.
+        # If the gap is already sufficient, use a speed boost to catch the receiver;
+        # otherwise use a slight undercut to open the gap while crossing lanes.
+        # This way the truck keeps moving throughout the maneuver.
         offset = self._behind_offset()
         receiver_speed_kmh = self._receiver_tail().speed * 3.6
+        self._lc_dir = self._resolve_lc_dir()
         if offset >= TARGET_GAP_M:
-            self._lc_dir = self._resolve_lc_dir()
             self._set_speed(receiver_speed_kmh + LANE_CHANGE_BOOST_KMH)
-            self.state = TransferState.LANE_CHANGE
-            print(f"[transfer] gap={offset:.1f}m -> start LANE_CHANGE")
         else:
-            self._set_speed(max(receiver_speed_kmh - OPEN_GAP_DELTA_KMH, 5.0))
-            self.state = TransferState.GAP_OPENING
-            print(f"[transfer] gap={offset:.1f}m -> start GAP_OPENING")
+            self._set_speed(max(receiver_speed_kmh - OPEN_GAP_DELTA_KMH, MERGE_MIN_SPEED_KMH))
+        self.state = TransferState.LANE_CHANGE
+        print(f"[transfer] gap={offset:.1f}m -> start LANE_CHANGE immediately (no stop)")
 
         self._sample_ticks = 0
         self._lc_confirm = 0
         return True
+
+    def abort(self, reason="unknown"):
+        if self.state == TransferState.ABORT:
+            return
+        
+        print(f"[transfer] ABORTING: {reason}")
+        self.state = TransferState.ABORT
+        
+        if self.detached_vehicle:
+            # Safely stop the vehicle in its current lane
+            self.detached_vehicle.set_autopilot(True, self.tm_port)
+            configure_tm_vehicle(self.tm, self.detached_vehicle._carla_vehicle, 0.0)
+            
+        request_id = _bridge_get_committed_request_id()
+        if request_id:
+            _bridge_fail(request_id, reason)
 
     def update(self):
         if self.detached_vehicle is None or self.state in (TransferState.CRUISE, TransferState.COMPLETE):
             return
 
         self._sample_ticks += 1
+        
+        # Safety Check: Detect upcoming junctions (like the highway fork)
+        if self._sample_ticks % 10 == 0:
+            if not self._is_straight(self.detached_vehicle._carla_vehicle, ahead_m=30.0):
+                self.abort("upcoming junction detected too close")
+                return
 
-        if self.state == TransferState.GAP_OPENING:
-            offset = self._behind_offset()
-            receiver_speed_kmh = self._receiver_tail().speed * 3.6
-            if offset < TARGET_GAP_M:
-                self._set_speed(max(receiver_speed_kmh - OPEN_GAP_DELTA_KMH, 5.0))
-                if self._sample_ticks % 20 == 0:
-                    print(f"    [GAP] offset={offset:.1f}m  need={TARGET_GAP_M:.1f}m")
-            else:
-                self._lc_dir = self._resolve_lc_dir()
-                self._set_speed(receiver_speed_kmh + LANE_CHANGE_BOOST_KMH)
-                self.state = TransferState.LANE_CHANGE
-                print(f"[transfer] GAP_OPENING -> LANE_CHANGE  offset={offset:.1f}m")
+        # Phase-specific timeouts
+        if self.state == TransferState.LANE_CHANGE and self._sample_ticks > 1500: # 15s timeout
+             self.abort("lane change timeout")
+             return
+        if self.state == TransferState.FOLLOWING and self._sample_ticks > 2500: # 25s timeout (cumulative)
+             self.abort("following timeout")
+             return
 
-        elif self.state == TransferState.LANE_CHANGE:
+        if self.state == TransferState.LANE_CHANGE:
             receiver_tail = self._receiver_tail()
-            self._set_speed(receiver_tail.speed * 3.6 + LANE_CHANGE_BOOST_KMH)
+            offset = self._behind_offset()
+            receiver_speed_kmh = receiver_tail.speed * 3.6
+            # While gap is not yet safe, undercut receiver speed to drift back
+            # while changing lanes simultaneously.  Once the gap is open, boost
+            # to stay close and complete the lateral move.
+            if offset < TARGET_GAP_M:
+                lc_speed = max(receiver_speed_kmh - OPEN_GAP_DELTA_KMH, MERGE_MIN_SPEED_KMH)
+            else:
+                lc_speed = receiver_speed_kmh + LANE_CHANGE_BOOST_KMH
+            self._apply_manual_merge_control(lc_speed)
 
-            if self._lc_dir is not None and self._sample_ticks % 3 == 0:
-                self.tm.force_lane_change(self.detached_vehicle._carla_vehicle, self._lc_dir)
+            ego_loc = self.detached_vehicle._carla_vehicle.get_location()
+            recv_loc = receiver_tail._carla_vehicle.get_location()
+            ego_wpt = self._map.get_waypoint(ego_loc)
+            receiver_wpt = self._map.get_waypoint(recv_loc)
 
-            ego_wpt = self._map.get_waypoint(self.detached_vehicle._carla_vehicle.get_location())
-            receiver_wpt = self._map.get_waypoint(receiver_tail._carla_vehicle.get_location())
-            # Use Y-coordinate comparison instead of road_id+lane_id: the fork
-            # junction at x≈658 flips the receiver lane ID (-3→+3), which would
-            # permanently stall the confirm counter despite the ego being in the
-            # correct physical lane.
-            in_receiver_lane = (
-                abs(
-                    self.detached_vehicle._carla_vehicle.get_location().y
-                    - receiver_tail._carla_vehicle.get_location().y
-                )
-                < LANE_CENTER_TOLERANCE_M
-            )
+            # Measure lateral separation in ego-heading frame (right-perpendicular).
+            # This is more robust than raw Y-coordinate which only works on
+            # near-horizontal roads and breaks on curved segments.
+            # lane_id comparison is avoided because the junction at x≈658 flips
+            # lane IDs (-3→+3) which would permanently stall the confirm counter.
+            ego_yaw_rad = np.deg2rad(ego_wpt.transform.rotation.yaw)
+            right_vec = np.array([np.sin(ego_yaw_rad), -np.cos(ego_yaw_rad)])
+            diff_xy = np.array([recv_loc.x - ego_loc.x, recv_loc.y - ego_loc.y])
+            lateral_sep = abs(float(np.dot(diff_xy, right_vec)))
+            in_receiver_lane = lateral_sep < LANE_CENTER_TOLERANCE_M
 
             if in_receiver_lane:
                 self._lc_confirm += 1
@@ -810,42 +1095,41 @@ class TailTransferCoordinator:
                     self.tm.distance_to_leading_vehicle(self.detached_vehicle._carla_vehicle, TEMP_MERGE_FOLLOW_DIST_M)
                     self._set_speed(receiver_tail.speed * 3.6 + CATCHUP_KMH)
                     self.state = TransferState.FOLLOWING
-                    self.merge_complete = True
                     print(f"[transfer] LANE_CHANGE -> FOLLOWING  gap={gap:.1f}m")
             else:
                 self._lc_confirm = 0
 
             if self._sample_ticks % 20 == 0:
-                ego_y = self.detached_vehicle._carla_vehicle.get_location().y
-                recv_y = receiver_tail._carla_vehicle.get_location().y
                 print(
-                    f"    [LC] donor lane={ego_wpt.lane_id}(y={ego_y:.1f})  "
-                    f"receiver lane={receiver_wpt.lane_id}(y={recv_y:.1f})  "
-                    f"Δy={abs(ego_y-recv_y):.1f}m  confirm={self._lc_confirm}/{CONFIRM_TICKS}"
+                    f"    [LC] donor lane={ego_wpt.lane_id}(y={ego_loc.y:.1f})  "
+                    f"receiver lane={receiver_wpt.lane_id}(y={recv_loc.y:.1f})  "
+                    f"lat_sep={lateral_sep:.1f}m  confirm={self._lc_confirm}/{CONFIRM_TICKS}"
                 )
 
         elif self.state == TransferState.FOLLOWING:
             receiver_tail = self._receiver_tail()
             gap = receiver_tail.distance_to(self.detached_vehicle)
             receiver_speed_kmh = receiver_tail.speed * 3.6
-
-            # Keep TM collision avoidance active: prevents rear-ending P1 tail
-            # even when we command high catchup speed.
-            self.tm.distance_to_leading_vehicle(
-                self.detached_vehicle._carla_vehicle, FOLLOW_DIST_M
-            )
             if gap > FOLLOW_DIST_M + 2.0:
                 # Scale catchup speed with gap distance – faster when far away
                 extra = min(CATCHUP_KMH * gap / FOLLOW_DIST_M, CATCHUP_KMH * 3)
-                self._set_speed(receiver_speed_kmh + extra)
+                self._apply_manual_merge_control(receiver_speed_kmh + extra, lookahead_m=35.0)
             else:
-                self._set_speed(receiver_speed_kmh)
+                self._apply_manual_merge_control(receiver_speed_kmh, lookahead_m=25.0)
+                offset = self._behind_offset()
+                if offset >= 0.0:
+                    self.merge_complete = True
+                    print(f"[transfer] FOLLOWING -> COMPLETE_READY  gap={gap:.1f}m  offset={offset:.1f}m")
 
     def finalize_join(self):
         if not self.merge_complete or self.detached_vehicle is None:
             return False
 
         joined_vehicle = self.detached_vehicle
+        # Capture predecessor BEFORE attach_tail_vehicle(); after that call,
+        # receiver_platoon[-1] becomes joined_vehicle itself, making any
+        # self._receiver_tail() call return the wrong vehicle (distance=0, own speed).
+        prev_tail = self.receiver_platoon[-1]
         set_lead_speed(self.tm, self.receiver_platoon, SYNC_SPEED_KMH)
         set_lead_speed(self.tm, self.donor_platoon, SYNC_SPEED_KMH)
         joined_vehicle.set_autopilot(False, self.tm_port)
@@ -854,11 +1138,10 @@ class TailTransferCoordinator:
         controller = PlatooningControllers.FollowerController(
             joined_vehicle, v_ref_cacc_merge, self.receiver_platoon, dependencies=[-1, 0]
         )
-        # Seed target_speed to a high value so the PID applies full throttle
-        # from the very first control step rather than waiting for the first
-        # take_measurements() call (which is up to SAMPLING_RATE steps later).
-        gap_at_join = self._receiver_tail().distance_to(joined_vehicle)
-        v_pre_kmh = self._receiver_tail().speed * 3.6
+        # Seed target_speed so PID applies throttle from the first control step
+        # rather than waiting for the next take_measurements() call.
+        gap_at_join = prev_tail.distance_to(joined_vehicle)
+        v_pre_kmh = prev_tail.speed * 3.6
         controller.target_speed = v_pre_kmh + min((gap_at_join - FOLLOW_DIST_M) * 3.0, CATCHUP_KMH * 3)
         joined_vehicle.attach_controller(controller)
 
@@ -942,19 +1225,18 @@ def main():
         "P2-2": p2[2],
     }
 
-    coordinator = TailTransferCoordinator("P2", p2, "P1", p1, tm, tm_port, cmap)
+    coordinator = TailTransferCoordinator("P1", p1, "P2", p2, tm, tm_port, cmap)
     camera = SmoothCamera(sim.spectator)
     _start_trigger_server()
     kb = KeyInput()
     approach_started = False
-    approach_chaser = None
-    p1_hold_speed = SYNC_SPEED_KMH
-    p2_hold_speed = SYNC_SPEED_KMH
+    approach_start_time_s = None
+    merge_failure_reported = False
     stable_reported = False
     post_merge_speed_set = False
 
-    print(f"P1 receiver lane={p1_lane}  lead=({p1_sp.location.x:.1f}, {p1_sp.location.y:.1f})")
-    print(f"P2 donor    lane={p2_lane}  lead=({p2_sp.location.x:.1f}, {p2_sp.location.y:.1f})")
+    print(f"P1 donor    lane={p1_lane}  lead=({p1_sp.location.x:.1f}, {p1_sp.location.y:.1f})")
+    print(f"P2 receiver lane={p2_lane}  lead=({p2_sp.location.x:.1f}, {p2_sp.location.y:.1f})")
     print(
         f"Initial cruise: both {SYNC_SPEED_KMH:.0f} km/h, "
         "after SPACE -> adaptive rendezvous control brings both platoons together, "
@@ -973,65 +1255,64 @@ def main():
         TransferState.LANE_CHANGE: 2,
         TransferState.FOLLOWING: 3,
         TransferState.COMPLETE: 4,
+        TransferState.ABORT: 5,
     }
     step = 0
 
     def start_approach(time_s):
-        nonlocal approach_started, approach_chaser, p1_hold_speed, p2_hold_speed
+        nonlocal approach_started, approach_start_time_s
         if approach_started or coordinator.state != TransferState.CRUISE:
             return False
 
-        lead_metrics = compute_pair_metrics(cmap, p1[0], p2[0])
-        approach_chaser = "P1" if lead_metrics["offset_m"] < 0.0 else "P2"
-        p1_hold_speed = max(p1[0].speed * 3.6, 5.0)
-        p2_hold_speed = max(p2[0].speed * 3.6, 5.0)
+        lead_metrics = compute_pair_metrics(cmap, p2[0], p1[0])
 
-        if approach_chaser == "P1":
-            set_lead_speed(tm, p1, APPROACH_FAST_KMH)
-            set_lead_speed(tm, p2, SYNC_SPEED_KMH)
-        else:
-            set_lead_speed(tm, p1, SYNC_SPEED_KMH)
-            set_lead_speed(tm, p2, APPROACH_FAST_KMH)
+        set_lead_speed(tm, p1, SYNC_SPEED_KMH)
+        set_lead_speed(tm, p2, APPROACH_FAST_KMH)
 
         approach_started = True
-        rid = _bridge_get_committed_request_id()
-        if rid:
-            _bridge_notify(rid, "merging")
+        approach_start_time_s = time_s
+        transfer, _ = _bridge_get_ready_transfer()
+        if transfer and transfer.get("status") == "committed":
+            _bridge_notify(transfer["request_id"], "merging")
+        _bridge_update_readiness(
+            "merging",
+            False,
+            "start_merge accepted; adaptive rendezvous started",
+            request_id=transfer["request_id"] if transfer else None,
+            metrics={"time_s": round(time_s, 1), "lead_offset_m": round(lead_metrics["offset_m"], 2)},
+        )
         print(
             f"[approach] triggered at {time_s:.1f}s -> "
-            f"{approach_chaser} will catch up "
-            f"(lead offset={lead_metrics['offset_m']:.1f}m)"
+            "adaptive receiver/donor speed control "
+            f"(donor behind receiver lead offset={lead_metrics['offset_m']:.1f}m)"
         )
         return True
 
     def update_approach_control(lead_metrics, tail_metrics):
         offset = tail_metrics["offset_m"]
 
-        # Proportional control: drive offset toward TARGET_OFFSET
+        # Proportional control: drive donor-behind-receiver offset toward TARGET_OFFSET.
         TARGET_OFFSET = MERGE_OFFSET_MIN_M + 5.0   # aim slightly above minimum
 
         # Aligned and offset in target range → hold at cruise (ready for merge)
-        if _vehicles_laterally_adjacent(p1[-1], p2[-1]) and MERGE_OFFSET_MIN_M <= offset <= TARGET_OFFSET + 5.0:
+        if _vehicles_laterally_adjacent(p2[-1], p1[-1]) and MERGE_OFFSET_MIN_M <= offset <= TARGET_OFFSET + 5.0:
             set_lead_speed(tm, p1, SYNC_SPEED_KMH)
             set_lead_speed(tm, p2, SYNC_SPEED_KMH)
             return SYNC_SPEED_KMH, SYNC_SPEED_KMH, "merge-hold", "-"
-        err = TARGET_OFFSET - offset               # positive → P2 not yet far enough behind P1
-        K = 0.5                                    # km/h per metre of error (gentle)
 
-        if approach_chaser == "P1":
-            # P1 must overtake P2; speed up when err>0, coast when err<0
-            p1_spd = float(np.clip(SYNC_SPEED_KMH + K * err,
-                                   SYNC_SPEED_KMH - 15.0, APPROACH_FAST_KMH))
-            p2_spd = SYNC_SPEED_KMH
-            phase = "P1-approach"
-            behind = "P1"
-        else:
-            # P2 must close the gap; speed up when offset is too large (err<0)
-            p2_spd = float(np.clip(SYNC_SPEED_KMH - K * err,
-                                   SYNC_SPEED_KMH - 15.0, APPROACH_FAST_KMH))
+        err = TARGET_OFFSET - offset
+        K = 0.5
+        if err > 0.0:
+            # Donor is not far enough behind receiver: pull the receiver ahead.
             p1_spd = SYNC_SPEED_KMH
-            phase = "P2-approach"
-            behind = "P2"
+            p2_spd = float(np.clip(SYNC_SPEED_KMH + K * err, SYNC_SPEED_KMH, APPROACH_FAST_KMH))
+            phase = "receiver-pull"
+        else:
+            # Donor is too far behind receiver: let donor close the gap.
+            p1_spd = float(np.clip(SYNC_SPEED_KMH - K * err, SYNC_SPEED_KMH, APPROACH_FAST_KMH))
+            p2_spd = SYNC_SPEED_KMH
+            phase = "donor-close"
+        behind = "P1"
 
         set_lead_speed(tm, p1, p1_spd)
         set_lead_speed(tm, p2, p2_spd)
@@ -1047,9 +1328,19 @@ def main():
             is_sample = step % SAMPLING_RATE == 0
             time_s = step * DT
 
+            if time_s > 200.0:
+                print(f"\n[timeout] Failed to complete within 200s (state: {coordinator.state.name})")
+                sys.exit(1)
+
+            if coordinator.state == TransferState.COMPLETE:
+                print(f"\n[success] Transfer completed at {time_s:.1f}s. Exiting.")
+                sys.exit(0)
+
             if is_sample and not approach_started:
                 key = kb.read()
                 if key == " ":
+                    target_v = p1[1] if len(p1) > 1 else p1[-1]
+                    threading.Thread(target=_auto_bridge_commit, args=(target_v.id,), daemon=True).start()
                     start_approach(time_s)
                 elif _merge_trigger_event.is_set():
                     _merge_trigger_event.clear()
@@ -1057,10 +1348,13 @@ def main():
                     start_approach(time_s)
 
             if is_sample and coordinator.state == TransferState.CRUISE:
-                pair_metrics = compute_pair_metrics(cmap, p1[-1], p2[-1])
-                lead_metrics = compute_pair_metrics(cmap, p1[0], p2[0])
-                donor_straight_ready = coordinator._is_straight(p2[-1]._carla_vehicle)
-                receiver_straight_ready = coordinator._is_straight(p1[-1]._carla_vehicle)
+                # Target middle truck (index 1) for alignment metrics
+                alignment_v = p1[1] if len(p1) > 1 else p1[-1]
+                pair_metrics = compute_pair_metrics(cmap, p2[-1], alignment_v)
+                lead_metrics = compute_pair_metrics(cmap, p2[0], p1[0])
+                donor_straight_ready = coordinator._is_straight(alignment_v._carla_vehicle)
+                receiver_straight_ready = coordinator._is_straight(p2[-1]._carla_vehicle)
+                
                 if approach_started:
                     p1_cmd_speed, p2_cmd_speed, approach_phase, behind_label = update_approach_control(
                         lead_metrics, pair_metrics
@@ -1070,17 +1364,46 @@ def main():
                     approach_phase = "idle"
                     behind_label = "-"
 
-                lat_adj_now = _vehicles_laterally_adjacent(p1[-1], p2[-1])
+                lat_adj_now = _vehicles_laterally_adjacent(p2[-1], alignment_v)
                 merge_ready = (
                     approach_started
-                    and donor_straight_ready
-                    and receiver_straight_ready
                     and lat_adj_now
                     and pair_metrics["distance_m"] <= MERGE_DISTANCE_LIMIT_M
                     and pair_metrics["yaw_delta_deg"] <= MERGE_YAW_LIMIT_DEG
                     and pair_metrics["offset_m"] >= MERGE_OFFSET_MIN_M
                     and time_s >= MIN_TRIGGER_TIME_S
                 )
+                if step % BRIDGE_POLL_TICKS == 0:
+                    request_id = _bridge_get_committed_request_id()
+                    status = "ready" if merge_ready else ("merging" if approach_started else "waiting")
+                    _bridge_update_readiness(
+                        status,
+                        merge_ready,
+                        _readiness_reason(
+                            approach_started,
+                            donor_straight_ready,
+                            receiver_straight_ready,
+                            lat_adj_now,
+                            pair_metrics,
+                            time_s,
+                        ),
+                        request_id=request_id,
+                        vehicle_id=alignment_v.id,
+                        metrics={
+                            "time_s": round(time_s, 1),
+                            "state": coordinator.state.name,
+                            "approach_started": approach_started,
+                            "distance_m": round(pair_metrics["distance_m"], 2),
+                            "offset_m": round(pair_metrics["offset_m"], 2),
+                            "lateral_m": round(pair_metrics["lateral_m"], 2),
+                            "yaw_delta_deg": round(pair_metrics["yaw_delta_deg"], 2),
+                            "lat_adjacent": lat_adj_now,
+                            "donor_straight": donor_straight_ready,
+                            "receiver_straight": receiver_straight_ready,
+                            "p1_cmd_kmh": round(p1_cmd_speed, 1),
+                            "p2_cmd_kmh": round(p2_cmd_speed, 1),
+                        },
+                    )
                 if merge_ready:
                     print(
                         "[merge] transfer conditions satisfied "
@@ -1089,7 +1412,7 @@ def main():
                         f"dist={pair_metrics['distance_m']:.1f}m, "
                         f"yaw={pair_metrics['yaw_delta_deg']:.1f}deg)"
                     )
-                    coordinator.try_start_transfer()
+                    coordinator.try_start_transfer(step)
                 elif approach_started and step % 500 == 0:
                     print(
                         "[merge-wait] "
@@ -1098,9 +1421,19 @@ def main():
                         f"dist={pair_metrics['distance_m']:.1f}m  "
                         f"yaw={pair_metrics['yaw_delta_deg']:.1f}deg"
                     )
+                if (
+                    approach_started
+                    and approach_start_time_s is not None
+                    and not merge_failure_reported
+                    and (time_s - approach_start_time_s) > MERGE_TIMEOUT_S
+                    and coordinator.state == TransferState.CRUISE
+                ):
+                    merge_failure_reported = True
+                    reason = f"merge readiness timeout after {MERGE_TIMEOUT_S:.0f}s"
+                    coordinator.abort(reason)
+                    print(f"[timeout] {reason}")
 
-            if is_sample:
-                coordinator.update()
+            coordinator.update()
 
             if coordinator.merge_complete and coordinator.state != TransferState.COMPLETE:
                 coordinator.finalize_join()
@@ -1138,8 +1471,8 @@ def main():
 
             if step % 500 == 0:
                 if coordinator.state == TransferState.CRUISE:
-                    pair_metrics = compute_pair_metrics(cmap, p1[-1], p2[-1])
-                    lead_metrics = compute_pair_metrics(cmap, p1[0], p2[0])
+                    pair_metrics = compute_pair_metrics(cmap, p2[-1], p1[-1])
+                    lead_metrics = compute_pair_metrics(cmap, p2[0], p1[0])
                     p1_lead_wpt = cmap.get_waypoint(p1[0]._carla_vehicle.get_location())
                     p2_lead_wpt = cmap.get_waypoint(p2[0]._carla_vehicle.get_location())
                     offset_info = pair_metrics["offset_m"]
@@ -1191,7 +1524,7 @@ def main():
                     )
                     committed_ids = [
                         tid for tid, t in snapshot_data.get("transfers", {}).items()
-                        if t["status"] in ("committed", "merging")
+                        if t["status"] in ("committed", "merging") and _transfer_matches_scenario(t)
                     ]
                     for tid in committed_ids:
                         req = urllib.request.Request(
@@ -1204,23 +1537,25 @@ def main():
                             urllib.request.urlopen(req, timeout=2)
                         except Exception:
                             pass  # endpoint optional; bridge server may not implement it yet
+                        _bridge_update_readiness(
+                            "complete",
+                            True,
+                            "CARLA physical merge completed",
+                            request_id=tid,
+                            metrics={"time_s": round(time_s, 1), "state": coordinator.state.name},
+                        )
                     print(f"[bridge] notified carla_complete for {committed_ids}")
                 except Exception:
                     pass
 
             # Speed up only once the merged vehicle has actually closed the gap.
             # Speeding up immediately would widen the gap and defeat the purpose.
-            if stable_reported and not post_merge_speed_set and len(p1) >= 2:
-                tail_gap = p1[-2].distance_to(p1[-1])
+            if stable_reported and not post_merge_speed_set and len(p2) >= 2:
+                tail_gap = p2[-2].distance_to(p2[-1])
                 if tail_gap <= FOLLOW_DIST_M + 3.0:
                     post_merge_speed_set = True
                     set_lead_speed(tm, p1, POST_MERGE_SPEED_KMH)
                     set_lead_speed(tm, p2, POST_MERGE_SPEED_KMH)
-                    print(
-                        f"[speed] Merged vehicle in position (gap={tail_gap:.1f}m). "
-                        f"Cruising at {POST_MERGE_SPEED_KMH:.0f} km/h - Ctrl+C to exit."
-                    )
-
             step += 1
 
     except KeyboardInterrupt:
@@ -1228,54 +1563,8 @@ def main():
     finally:
         kb.restore()
         sim.release_synchronous()
-
     print("\n=== Done ===")
-
-    try:
-        from matplotlib import pyplot as plt
-
-        t = np.asarray(log_time)
-        colors = plt.cm.tab10
-
-        fig, axes = plt.subplots(4, 1, figsize=(14, 12), sharex=True)
-        fig.suptitle("Two Platoon Truck Transfer  -  Town06", fontsize=13)
-
-        for idx, name in enumerate(actor_names):
-            axes[0].plot(t, np.asarray(log_speed[name]), label=name, color=colors(idx))
-        axes[0].set_ylabel("Speed (km/h)")
-        axes[0].legend(ncol=3)
-        axes[0].grid(alpha=0.3)
-
-        axes[1].plot(t, np.asarray(log_sizes["P1"]), label="P1 size", color="tab:blue")
-        axes[1].plot(t, np.asarray(log_sizes["P2"]), label="P2 size", color="tab:orange")
-        axes[1].set_ylabel("Platoon size")
-        axes[1].legend()
-        axes[1].grid(alpha=0.3)
-
-        axes[2].plot(t, np.asarray(log_gap), label="receiver tail -> transferred truck", color="tab:green")
-        axes[2].axhline(FOLLOW_DIST_M, ls="--", color="gray", alpha=0.6, label=f"target {FOLLOW_DIST_M}m")
-        axes[2].set_ylabel("Gap (m)")
-        axes[2].legend()
-        axes[2].grid(alpha=0.3)
-
-        axes[3].step(t, np.asarray(log_state), color="tab:red", where="post", lw=1.5)
-        axes[3].set_yticks([0, 1, 2, 3, 4])
-        axes[3].set_yticklabels(["CRUISE", "GAP", "LC", "FOLLOW", "COMPLETE"])
-        axes[3].set_ylabel("State")
-        axes[3].set_xlabel("Time (s)")
-        axes[3].grid(alpha=0.3)
-
-        plt.tight_layout()
-        out = os.path.join(os.path.dirname(__file__), "two_platoon_truck_result.png")
-        plt.savefig(out, dpi=150)
-        print(f"Plot -> {out}")
-        if SHOW_PLOT:
-            plt.show()
-        else:
-            plt.close(fig)
-    except ImportError:
-        pass
-
 
 if __name__ == "__main__":
     main()
+

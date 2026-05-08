@@ -254,37 +254,62 @@ class Platoon:
 		if self.lead_vehicle.autopilot and tm_port is None:
 			raise Exception("Cannot assign autopilot to the new platoon since tm_port is unspecified.")
 
+		old_lead_was_autopilot = self.lead_vehicle.autopilot
+		old_lead_controller = self.lead_vehicle.controller
+
 		new_platoon = Platoon(self.simulation)
-		vehicles_to_split = self[first: last + 1 - (first == 0)]
-		new_lead_controller = copy(self.lead_vehicle.controller)  # None if lead vehicle is on autopilot
+		all_v = [self.lead_vehicle] + self.follower_vehicles
+		vehicles_to_split = all_v[first : last + 1]
+		
+		new_lead_controller = None
+		if not vehicles_to_split[0].autopilot:
+			new_lead_controller = copy(old_lead_controller)
 
-		del self.follower_vehicles[first-1: last - (first == 0)]
-
-		if first == 0:
-			own_new_lead_vehicle = self.follower_vehicles.pop(last)
-			self.lead_vehicle.controller.vehicle = own_new_lead_vehicle
-			if self.lead_vehicle.autopilot:
-				own_new_lead_vehicle.set_autopilot(True, tm_port)
-			else:
-				own_new_lead_vehicle.attach_controller(self.lead_vehicle.controller)
-
-		for vehicle in vehicles_to_split[1:]:
-			vehicle.controller.platoon = new_platoon
-
-		if self.lead_vehicle.autopilot:
-			vehicles_to_split[0].set_autopilot(True, tm_port)
+		# Reconstruct self (remaining platoon)
+		remaining_v = all_v[:first] + all_v[last+1:]
+		
+		if remaining_v:
+			self.lead_vehicle = remaining_v[0]
+			self.follower_vehicles = remaining_v[1:]
+			
+			if first == 0:
+				# We promoted a follower to lead. Give it the old lead's control mode.
+				if old_lead_was_autopilot:
+					self.lead_vehicle.set_autopilot(True, tm_port)
+				else:
+					self.lead_vehicle.attach_controller(old_lead_controller)
+					old_lead_controller.vehicle = self.lead_vehicle
+					if hasattr(old_lead_controller, "reset_waypoints"):
+						old_lead_controller.reset_waypoints()
 		else:
-			new_lead_controller.vehicle = vehicles_to_split[0]
-			vehicles_to_split[0].attach_controller(new_lead_controller)
-			new_lead_controller.reset_waypoints()
+			self.lead_vehicle = None
+			self.follower_vehicles = []
 
+		# Set up new platoon
 		new_platoon.lead_vehicle = vehicles_to_split[0]
 		new_platoon.follower_vehicles = vehicles_to_split[1:]
-		new_platoon.reindex()
+		
+		# Ensure correct controllers for followers of the new platoon
+		for vehicle in new_platoon.follower_vehicles:
+			vehicle.controller.platoon = new_platoon
+
+		if first != 0:
+			# New platoon leader was a follower.
+			if vehicles_to_split[0].autopilot:
+				pass
+			else:
+				vehicles_to_split[0].attach_controller(new_lead_controller)
+				new_lead_controller.vehicle = vehicles_to_split[0]
+				if hasattr(new_lead_controller, "reset_waypoints"):
+					new_lead_controller.reset_waypoints()
+		else:
+			# New platoon leader was the original leader.
+			# Its autopilot/controller is already set correctly.
+			pass
 
 		self.reindex()
-		self.simulation.add_platoon(new_platoon)
-		# new_platoon.take_measurements()
+		new_platoon.reindex()
+		# new_platoon is already added via __init__
 
 		return new_platoon, new_lead_controller
 
@@ -297,23 +322,29 @@ class Platoon:
 			other: the Platoon instance to be merged into this one
 			tm_port: Carla Traffic Manager port if the lead vehicles are on autopilot.
 		"""
-		other_follower_controller = copy(other[1].controller)  # copying first followers controller to assign to lead
+		# If other only has a lead vehicle, we use the controller from the last follower of self
+		# or a default FollowerController if self is also just a lead.
+		if len(other.follower_vehicles) > 0:
+			other_follower_controller = copy(other.follower_vehicles[0].controller)
+		else:
+			# Fallback for single-vehicle merge
+			other_follower_controller = copy(self.follower_vehicles[-1].controller) if self.follower_vehicles else None
+
 		if other[0].autopilot:
 			if tm_port is not None:
 				other[0].set_autopilot(False, tm_port)
 			else:
 				raise Exception("The lead vehicle of the other platoon is on autopilot, but tm_port is unspecified.")
 
-		other_follower_controller.vehicle = other[0]
-		other[0].attach_controller(other_follower_controller)
+		if other_follower_controller:
+			other_follower_controller.vehicle = other[0]
+			other[0].attach_controller(other_follower_controller)
+			other_follower_controller.platoon = self
+
 		self.follower_vehicles.append(other[0])
 		self.follower_vehicles.extend(other.follower_vehicles)
 		self.reindex()
 
-		# other.lead_waypoints.reverse()  # extendleft reverses order
-		# self.lead_waypoints.extendleft(other.lead_waypoints)  # todo: add lead_waypoints from other platoon
-
-		other_follower_controller.platoon = self
 		for vehicle in other.follower_vehicles:
 			vehicle.controller.platoon = self
 

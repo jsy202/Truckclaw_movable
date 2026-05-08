@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="900" viewBox="0 0 1600 900">
+  <defs>
+    <style>
+      .bg { fill: #f4f1ea; }
+      .landmark { fill: #e4ece2; opacity: 0.85; }
+      .road-base {
+        fill: none;
+        stroke: #555c59;
+        stroke-width: 78;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .road-surface {
+        fill: none;
+        stroke: #707875;
+        stroke-width: 58;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+      }
+      .divider {
+        fill: none;
+        stroke: #f6f3df;
+        stroke-width: 6;
+        stroke-linecap: round;
+        stroke-dasharray: 22 18;
+        opacity: 0.95;
+      }
+      .fork-island {
+        fill: #f4f1ea;
+        stroke: #c7cec7;
+        stroke-width: 4;
+      }
+      .point {
+        stroke: #13201d;
+        stroke-width: 4;
+      }
+      .label-box {
+        fill: #ffffff;
+        stroke-width: 3;
+        rx: 14;
+        ry: 14;
+      }
+      .label {
+        font: 700 34px "DejaVu Sans", sans-serif;
+      }
+    </style>
+  </defs>
+
+  <rect class="bg" x="0" y="0" width="1600" height="900" />
+
+  <ellipse class="landmark" cx="250" cy="182" rx="150" ry="82" />
+  <ellipse class="landmark" cx="1320" cy="180" rx="170" ry="94" />
+  <ellipse class="landmark" cx="1320" cy="724" rx="185" ry="102" />
+
+  <path class="road-base" d="M 120 455 C 330 455 590 455 770 455" />
+  <path class="road-surface" d="M 120 455 C 330 455 590 455 770 455" />
+
+  <path class="road-base" d="M 770 455 C 905 455 1025 394 1170 300 C 1260 242 1360 210 1480 210" />
+  <path class="road-surface" d="M 770 455 C 905 455 1025 394 1170 300 C 1260 242 1360 210 1480 210" />
+
+  <path class="road-base" d="M 770 455 C 905 455 1025 516 1170 610 C 1260 668 1360 700 1480 700" />
+  <path class="road-surface" d="M 770 455 C 905 455 1025 516 1170 610 C 1260 668 1360 700 1480 700" />
+
+  <path class="divider" d="M 145 455 C 340 455 590 455 760 455" />
+  <path class="divider" d="M 790 448 C 915 438 1028 385 1168 293 C 1257 235 1356 210 1460 210" />
+  <path class="divider" d="M 790 462 C 915 472 1028 525 1168 617 C 1257 675 1356 700 1460 700" />
+
+  <path class="fork-island" d="M 750 422 C 812 420 865 401 922 364 C 873 413 850 447 846 455 C 850 463 873 497 922 546 C 865 509 812 490 750 488 C 768 476 776 466 780 455 C 776 444 768 434 750 422 Z" />
+
+  <circle class="point" cx="330" cy="455" r="18" fill="#ef6b5a" />
+  <circle class="point" cx="520" cy="455" r="18" fill="#4292d0" />
+  <circle class="point" cx="1350" cy="210" r="20" fill="#3aa757" />
+  <circle class="point" cx="1350" cy="700" r="20" fill="#2e79c8" />
+
+  <rect class="label-box" x="284" y="388" width="64" height="52" stroke="#ef6b5a" />
+  <text class="label" x="303" y="424" fill="#ef6b5a">A</text>
+
+  <rect class="label-box" x="489" y="505" width="64" height="52" stroke="#4292d0" />
+  <text class="label" x="507" y="541" fill="#4292d0">B</text>
+
+  <rect class="label-box" x="1380" y="162" width="116" height="56" stroke="#3aa757" />
+  <text class="label" x="1398" y="200" fill="#3aa757">D_A</text>
+
+  <rect class="label-box" x="1380" y="718" width="116" height="56" stroke="#2e79c8" />
+  <text class="label" x="1398" y="756" fill="#2e79c8">D_B</text>
+</svg>

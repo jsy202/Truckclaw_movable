@@ -4,380 +4,239 @@ Platoon Bridge Server  –  port 18801
 
 REST API used by platoon_bridge_ctl.py (inside Docker agents) to negotiate
 vehicle transfers between platoon A and platoon B.
-
-State is kept in memory; restart resets to the initial scenario.
-
-Endpoints
----------
-GET  /health
-GET  /snapshot
-GET  /platoons/{platoon_id}
-GET  /platoons/{platoon_id}/transfer-candidates
-GET  /transfers/{request_id}
-POST /transfers
-POST /transfers/{request_id}/accept
-POST /transfers/{request_id}/reject
-POST /transfers/{request_id}/commit
 """
 
 import json
 import re
 import threading
+import urllib.error
 import urllib.request
 import uuid
+import os
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
-
-CARLA_TRIGGER_URL = "http://127.0.0.1:18802/start_merge"
-
-
-def _notify_carla_trigger():
-    """Fire-and-forget POST to CARLA scenario trigger server."""
-    def _do():
-        try:
-            req = urllib.request.Request(
-                CARLA_TRIGGER_URL, data=b"{}", method="POST",
-                headers={"Content-Type": "application/json"},
-            )
-            urllib.request.urlopen(req, timeout=2)
-            print("[bridge] CARLA trigger sent -> /start_merge")
-        except Exception as e:
-            print(f"[bridge] CARLA trigger failed (scenario running?): {e}")
-    threading.Thread(target=_do, daemon=True).start()
-
-# ── initial scenario state ────────────────────────────────────────────────────
-
-INITIAL_STATE = {
-    "platoon_a": {
-        "platoon_id": "platoon_a",
-        "destination_id": "dest_a",   # Highway Main Lane (x=-140, y=210)
-        "status": "cruising",
-        "members": [
-            {"vehicle_id": "platoon_a_truck0", "role": "leader",   "destination_id": "dest_a"},
-            {"vehicle_id": "platoon_a_truck1", "role": "follower", "destination_id": "dest_a"},
-            {"vehicle_id": "platoon_a_truck2", "role": "follower", "destination_id": "dest_b"},
-        ],
-    },
-    "platoon_b": {
-        "platoon_id": "platoon_b",
-        "destination_id": "dest_b",   # Exit Ramp (x=-60, y=140)
-        "status": "cruising",
-        "members": [
-            {"vehicle_id": "platoon_b_truck0", "role": "leader",   "destination_id": "dest_b"},
-            {"vehicle_id": "platoon_b_truck1", "role": "follower", "destination_id": "dest_b"},
-            {"vehicle_id": "platoon_b_truck2", "role": "follower", "destination_id": "dest_b"},
-        ],
-    },
-}
-
-# ── in-memory state ───────────────────────────────────────────────────────────
-
 import copy
 
-_lock     = threading.Lock()
-_platoons = copy.deepcopy(INITIAL_STATE)
-_transfers: dict = {}
+CARLA_TRIGGER_URL = "http://127.0.0.1:18802/start_merge"
+ACTIVE_TRANSFER_STATUSES = ("pending", "accepted", "committed", "merging", "splitting")
+FAILURE_TRANSFER_STATUSES = ("trigger_failed", "merge_failed")
+CONFIG_PATH = os.path.join(os.path.dirname(__file__), "..", "config", "platoons.json")
 
+def _load_initial_state():
+    try:
+        if os.path.exists(CONFIG_PATH):
+            with open(CONFIG_PATH, "r") as f:
+                return json.load(f)
+    except Exception as e:
+        print(f"[bridge] Failed to load config from {CONFIG_PATH}: {e}")
+    return {
+        "platoon_a": {
+            "platoon_id": "platoon_a",
+            "destination_id": "dest_a",
+            "status": "cruising",
+            "members": [
+                {"vehicle_id": "platoon_a_truck0", "role": "leader",   "destination_id": "dest_a"},
+                {"vehicle_id": "platoon_a_truck1", "role": "follower", "destination_id": "dest_a"},
+                {"vehicle_id": "platoon_a_truck2", "role": "follower", "destination_id": "dest_b"},
+            ],
+        },
+        "platoon_b": {
+            "platoon_id": "platoon_b",
+            "destination_id": "dest_b",
+            "status": "cruising",
+            "members": [
+                {"vehicle_id": "platoon_b_truck0", "role": "leader",   "destination_id": "dest_b"},
+                {"vehicle_id": "platoon_b_truck1", "role": "follower", "destination_id": "dest_b"},
+                {"vehicle_id": "platoon_b_truck2", "role": "follower", "destination_id": "dest_b"},
+            ],
+        },
+    }
+
+_lock = threading.Lock()
+_platoons = _load_initial_state()
+_transfers: dict = {}
+_readiness: dict = {
+    "status": "unknown",
+    "merge_ready": False,
+    "reason": "initial",
+    "metrics": {},
+    "updated_at": None,
+}
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
-
 def _find_vehicle(vehicle_id: str):
-    """Return (platoon_dict, member_dict) or (None, None)."""
     for p in _platoons.values():
         for m in p["members"]:
             if m["vehicle_id"] == vehicle_id:
                 return p, m
     return None, None
 
-
 def _active_transfer_for(platoon_id: str):
-    """Return the single active (pending/accepted) transfer id for a platoon, or None."""
     for tid, t in _transfers.items():
-        if t["status"] in ("pending", "accepted"):
+        if t["status"] in ACTIVE_TRANSFER_STATUSES:
             if t["from_platoon_id"] == platoon_id or t["to_platoon_id"] == platoon_id:
                 return tid
     return None
 
+def _active_transfer_for_vehicle(vehicle_id: str):
+    for tid, t in _transfers.items():
+        if t["status"] in ACTIVE_TRANSFER_STATUSES and t["vehicle_id"] == vehicle_id:
+            return tid
+    return None
+
+def _is_tail_member(platoon: dict, vehicle_id: str) -> bool:
+    return bool(platoon["members"] and platoon["members"][-1]["vehicle_id"] == vehicle_id)
+
+def _complete_logical_transfer(t: dict):
+    vehicle_id = t["vehicle_id"]
+    from_platoon = _platoons[t["from_platoon_id"]]
+    to_platoon = _platoons[t["to_platoon_id"]]
+    member = next((m for m in from_platoon["members"] if m["vehicle_id"] == vehicle_id), None)
+    if member:
+        was_leader = (member["role"] == "leader")
+        from_platoon["members"].remove(member)
+        member["role"] = "follower"
+        to_platoon["members"].append(member)
+
+        if not from_platoon["members"]:
+            from_platoon["status"] = "dissolved"
+            print(f"[bridge] Platoon {t['from_platoon_id']} dissolved (0 members)")
+        elif was_leader and from_platoon["members"]:
+            from_platoon["members"][0]["role"] = "leader"
+            print(f"[bridge] {from_platoon['members'][0]['vehicle_id']} promoted to leader of {t['from_platoon_id']}")
+            
+    return from_platoon, to_platoon
+
+USE_CARLA = os.environ.get("MOCK_CARLA", "false").lower() != "true" # Set MOCK_CARLA=true to simulate progress without CARLA
+
+def _notify_carla_trigger(request_id: str):
+    if not USE_CARLA:
+        print(f"[bridge] Mock mode: CARLA trigger skipped for {request_id}. Simulating progress.")
+        def _mock_progress():
+            import time
+            with _lock:
+                t = _transfers.get(request_id)
+                if not t: return
+                t["status"] = "splitting"
+                _readiness.update({"status": "splitting", "merge_ready": False, "reason": "Mocking gap opening"})
+            
+            time.sleep(2)
+            with _lock:
+                t = _transfers.get(request_id)
+                if not t: return
+                t["status"] = "merging"
+                _readiness.update({"status": "merging", "merge_ready": False, "reason": "Mocking lane change"})
+            
+            time.sleep(2)
+            with _lock:
+                t = _transfers.get(request_id)
+                if not t: return
+                _complete_logical_transfer(t)
+                t["status"] = "carla_complete"
+                _readiness.update({"status": "idle", "merge_ready": True, "reason": "Mocking completed"})
+                print(f"[bridge] Mock mode: Transfer {request_id} completed logically.")
+        
+        threading.Thread(target=_mock_progress, daemon=True).start()
+        return
+
+    def _do():
+        try:
+            payload = json.dumps({"request_id": request_id}).encode("utf-8")
+            req = urllib.request.Request(CARLA_TRIGGER_URL, data=payload, method="POST", headers={"Content-Type": "application/json"})
+            urllib.request.urlopen(req, timeout=2)
+            print(f"[bridge] CARLA trigger sent ({request_id})")
+        except Exception as e:
+            print(f"[bridge] CARLA trigger failed: {e}")
+    threading.Thread(target=_do, daemon=True).start()
 
 def _transfer_candidates(platoon_id: str) -> list:
     p = _platoons.get(platoon_id)
-    if p is None:
-        return []
+    if not p: return []
     platoon_dest = p["destination_id"]
     candidates = []
+    tail_id = p["members"][-1]["vehicle_id"] if p["members"] else None
     for m in p["members"]:
-        if m["role"] == "leader":
-            continue
-        if m["destination_id"] == platoon_dest:
-            continue
-        # find a peer platoon whose destination matches this vehicle's destination
+        if m["destination_id"] == platoon_dest: continue
         for peer_id, peer in _platoons.items():
-            if peer_id == platoon_id:
-                continue
-            if peer["destination_id"] == m["destination_id"]:
+            if peer_id != platoon_id and peer["destination_id"] == m["destination_id"]:
                 candidates.append({
                     "vehicle_id": m["vehicle_id"],
-                    "reason": "destination_match",
                     "target_platoon_id": peer_id,
-                    "target_position": "tail",
+                    "requires_split": m["vehicle_id"] != tail_id
                 })
     return candidates
 
-
-# ── HTTP handler ──────────────────────────────────────────────────────────────
-
 class Handler(BaseHTTPRequestHandler):
-
-    def log_message(self, fmt, *args):  # noqa: N802 – overriding stdlib
-        print(f"[bridge] {self.address_string()} {fmt % args}")
-
-    # ── helpers ───────────────────────────────────────────────────────────────
-
-    def _send(self, code: int, body: dict):
-        data = json.dumps(body, ensure_ascii=False, indent=2).encode()
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def _ok(self, body: dict):
-        self._send(200, body)
-
-    def _err(self, code: int, msg: str):
-        self._send(code, {"error": msg})
-
-    def _read_body(self) -> dict:
+    def _send(self, code, body):
+        data = json.dumps(body, indent=2).encode()
+        self.send_response(code); self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(data))); self.end_headers(); self.wfile.write(data)
+    def _ok(self, body): self._send(200, body)
+    def _err(self, code, msg): self._send(code, {"error": msg})
+    def _read_body(self):
         length = int(self.headers.get("Content-Length", 0))
-        if length == 0:
-            return {}
-        return json.loads(self.rfile.read(length).decode())
+        return json.loads(self.rfile.read(length).decode()) if length > 0 else {}
 
-    # ── routing ───────────────────────────────────────────────────────────────
+    def do_GET(self):
+        global _platoons
+        p = self.path.rstrip("/")
+        with _lock:
+            if p == "/health": self._ok({"ok": True})
+            elif p == "/snapshot": self._ok({"platoons": _platoons, "transfers": _transfers, "readiness": _readiness})
+            elif p == "/readiness": self._ok(_readiness)
+            elif p.startswith("/platoons/"):
+                pid = p.split("/")[-1]
+                if pid.endswith("/transfer-candidates"):
+                    pid = p.split("/")[-2]
+                    self._ok({"candidates": _transfer_candidates(pid)})
+                else:
+                    self._ok(_platoons.get(pid, {}))
+            else: self._err(404, "not found")
 
-    def do_GET(self):  # noqa: N802
-        p = self.path.split("?")[0].rstrip("/")
-
-        if p == "/health":
-            self._ok({"ok": True, "status": "live"})
-
-        elif p == "/snapshot":
-            with _lock:
-                self._ok({
-                    "platoons": _platoons,
-                    "transfers": _transfers,
-                    "timestamp": _now(),
-                })
-
-        elif re.fullmatch(r"/platoons/[^/]+", p):
-            platoon_id = p.split("/")[2]
-            with _lock:
-                pl = _platoons.get(platoon_id)
-                if pl is None:
-                    return self._err(404, f"platoon '{platoon_id}' not found")
-                active = _active_transfer_for(platoon_id)
-                self._ok({**pl, "active_transfer": active})
-
-        elif re.fullmatch(r"/platoons/[^/]+/transfer-candidates", p):
-            platoon_id = p.split("/")[2]
-            with _lock:
-                if platoon_id not in _platoons:
-                    return self._err(404, f"platoon '{platoon_id}' not found")
-                self._ok({
-                    "platoon_id": platoon_id,
-                    "candidates": _transfer_candidates(platoon_id),
-                })
-
-        elif re.fullmatch(r"/transfers/[^/]+", p):
-            request_id = p.split("/")[2]
-            with _lock:
-                t = _transfers.get(request_id)
-                if t is None:
-                    return self._err(404, f"transfer '{request_id}' not found")
-                self._ok(t)
-
-        else:
-            self._err(404, "not found")
-
-    def do_POST(self):  # noqa: N802
-        p = self.path.split("?")[0].rstrip("/")
-
-        # POST /transfers  – create request
-        if p == "/transfers":
-            body = self._read_body()
-            required = ("vehicle_id", "from_platoon_id", "to_platoon_id")
-            missing = [k for k in required if not body.get(k)]
-            if missing:
-                return self._err(400, f"missing fields: {missing}")
-
-            vehicle_id    = body["vehicle_id"]
-            from_platoon  = body["from_platoon_id"]
-            to_platoon    = body["to_platoon_id"]
-            reason        = body.get("reason", "destination_match")
-            sender_agent  = body.get("sender_agent", from_platoon)
-            receiver_agent = body.get("receiver_agent", to_platoon)
-
-            with _lock:
-                if from_platoon not in _platoons:
-                    return self._err(404, f"platoon '{from_platoon}' not found")
-                if to_platoon not in _platoons:
-                    return self._err(404, f"platoon '{to_platoon}' not found")
-
-                src_platoon, member = _find_vehicle(vehicle_id)
-                if member is None:
-                    return self._err(404, f"vehicle '{vehicle_id}' not found")
-                if src_platoon["platoon_id"] != from_platoon:
-                    return self._err(400, f"vehicle '{vehicle_id}' is not in '{from_platoon}'")
-                if member["role"] == "leader":
-                    return self._err(400, "cannot transfer the leader vehicle")
-
-                active = _active_transfer_for(from_platoon) or _active_transfer_for(to_platoon)
-                if active:
-                    return self._err(409, f"transfer '{active}' already active")
-
-                request_id = "tr_" + uuid.uuid4().hex[:8]
-                t = {
-                    "request_id":    request_id,
-                    "vehicle_id":    vehicle_id,
-                    "from_platoon_id": from_platoon,
-                    "to_platoon_id": to_platoon,
-                    "status":        "pending",
-                    "reason":        reason,
-                    "sender_agent":  sender_agent,
-                    "receiver_agent": receiver_agent,
-                    "created_at":    _now(),
-                    "updated_at":    _now(),
-                }
-                _transfers[request_id] = t
-                print(f"[bridge] TRANSFER REQUEST  {request_id}  {vehicle_id}  {from_platoon} → {to_platoon}")
-                self._ok(t)
-
-        # POST /transfers/{id}/accept
-        elif re.fullmatch(r"/transfers/[^/]+/accept", p):
-            request_id = p.split("/")[2]
-            body = self._read_body()
-            with _lock:
-                t = _transfers.get(request_id)
-                if t is None:
-                    return self._err(404, f"transfer '{request_id}' not found")
-                if t["status"] != "pending":
-                    return self._err(409, f"transfer is '{t['status']}', expected 'pending'")
-                t["status"] = "accepted"
-                t["accept_reason"] = body.get("reason", "accepted")
-                t["updated_at"] = _now()
-                print(f"[bridge] ACCEPTED  {request_id}")
-                self._ok(t)
-
-        # POST /transfers/{id}/reject
-        elif re.fullmatch(r"/transfers/[^/]+/reject", p):
-            request_id = p.split("/")[2]
-            body = self._read_body()
-            with _lock:
-                t = _transfers.get(request_id)
-                if t is None:
-                    return self._err(404, f"transfer '{request_id}' not found")
-                if t["status"] != "pending":
-                    return self._err(409, f"transfer is '{t['status']}', expected 'pending'")
-                t["status"] = "rejected"
-                t["reject_reason"] = body.get("reason", "rejected")
-                t["updated_at"] = _now()
-                print(f"[bridge] REJECTED  {request_id}")
-                self._ok(t)
-
-        # POST /transfers/{id}/commit
-        elif re.fullmatch(r"/transfers/[^/]+/commit", p):
-            request_id = p.split("/")[2]
-            with _lock:
-                t = _transfers.get(request_id)
-                if t is None:
-                    return self._err(404, f"transfer '{request_id}' not found")
-                if t["status"] != "accepted":
-                    return self._err(409, f"transfer is '{t['status']}', expected 'accepted'")
-
-                vehicle_id   = t["vehicle_id"]
-                from_platoon = _platoons[t["from_platoon_id"]]
-                to_platoon   = _platoons[t["to_platoon_id"]]
-
-                # find and remove from source
-                member = next((m for m in from_platoon["members"] if m["vehicle_id"] == vehicle_id), None)
-                if member is None:
-                    return self._err(500, f"vehicle '{vehicle_id}' disappeared from source platoon")
-
-                from_platoon["members"].remove(member)
-                # append at tail of destination
-                member["role"] = "follower"
-                to_platoon["members"].append(member)
-
-                t["status"] = "committed"
-                t["committed_at"] = _now()
-                t["updated_at"] = _now()
-
-                _notify_carla_trigger()
-
-                print(
-                    f"[bridge] COMMITTED  {request_id}  {vehicle_id} "
-                    f"moved to {to_platoon['platoon_id']}  "
-                    f"(now {len(to_platoon['members'])} members)"
-                )
-                self._ok({
-                    "transfer": t,
-                    "from_platoon": from_platoon,
-                    "to_platoon": to_platoon,
-                })
-
-        # POST /transfers/{id}/merging  – CARLA notifies physical maneuver has started
-        elif re.fullmatch(r"/transfers/[^/]+/merging", p):
-            request_id = p.split("/")[2]
-            with _lock:
-                t = _transfers.get(request_id)
-                if t is None:
-                    return self._err(404, f"transfer '{request_id}' not found")
-                if t["status"] != "committed":
-                    return self._err(409, f"transfer is '{t['status']}', expected 'committed'")
-                t["status"] = "merging"
-                t["merging_at"] = _now()
-                t["updated_at"] = _now()
-                print(f"[bridge] MERGING  {request_id}  physical maneuver started in CARLA")
-                self._ok(t)
-
-        # POST /transfers/{id}/carla_complete  – CARLA notifies physical maneuver done
-        elif re.fullmatch(r"/transfers/[^/]+/carla_complete", p):
-            request_id = p.split("/")[2]
-            with _lock:
-                t = _transfers.get(request_id)
-                if t is None:
-                    return self._err(404, f"transfer '{request_id}' not found")
-                if t["status"] not in ("committed", "merging"):
-                    return self._err(409, f"transfer is '{t['status']}', expected 'committed' or 'merging'")
-                t["status"] = "carla_complete"
-                t["carla_complete_at"] = _now()
-                t["updated_at"] = _now()
-                print(f"[bridge] CARLA_COMPLETE  {request_id}  physical maneuver confirmed")
-                self._ok(t)
-
-        else:
-            self._err(404, "not found")
-
-
-# ── main ──────────────────────────────────────────────────────────────────────
+    def do_POST(self):
+        global _platoons
+        p = self.path.rstrip("/")
+        try: body = self._read_body()
+        except: return self._err(400, "bad json")
+        
+        with _lock:
+            if p == "/readiness":
+                _readiness.update(body); _readiness["updated_at"] = _now(); self._ok(_readiness)
+            elif p == "/reload":
+                _platoons = _load_initial_state(); self._ok({"ok": True})
+            elif p == "/transfers":
+                vid, fp, tp = body.get("vehicle_id"), body.get("from_platoon_id"), body.get("to_platoon_id")
+                if not vid or not fp or not tp: return self._err(400, "missing fields")
+                # Takeover logic
+                active = _active_transfer_for_vehicle(vid)
+                if active and _transfers[active]["status"] in ("pending", "accepted"):
+                    _transfers[active]["status"] = "replaced"
+                rid = "tr_" + uuid.uuid4().hex[:8]
+                t = {"request_id": rid, "vehicle_id": vid, "from_platoon_id": fp, "to_platoon_id": tp, "status": "pending", "requires_split": not _is_tail_member(_platoons[fp], vid), "created_at": _now()}
+                _transfers[rid] = t; self._ok(t)
+            elif "/accept" in p:
+                rid = p.split("/")[-2]; t = _transfers.get(rid)
+                if t: t["status"] = "accepted"; self._ok(t)
+                else: self._err(404, "not found")
+            elif "/commit" in p:
+                rid = p.split("/")[-2]; t = _transfers.get(rid)
+                if t: t["status"] = "committed"; _notify_carla_trigger(rid); self._ok(t)
+                else: self._err(404, "not found")
+            elif "/merging" in p:
+                rid = p.split("/")[-2]; t = _transfers.get(rid)
+                if t: t["status"] = "merging"; self._ok(t)
+            elif "/carla_complete" in p:
+                rid = p.split("/")[-2]; t = _transfers.get(rid)
+                if t: _complete_logical_transfer(t); t["status"] = "carla_complete"; self._ok(t)
+            elif "/failed" in p:
+                rid = p.split("/")[-2]; t = _transfers.get(rid)
+                if t: t["status"] = "merge_failed"; t["error"] = body.get("reason", "unknown"); self._ok(t)
+            else: self._err(404, "not found")
 
 def main():
-    host, port = "0.0.0.0", 18801
-    server = HTTPServer((host, port), Handler)
-    server.socket.setsockopt(__import__("socket").SOL_SOCKET, __import__("socket").SO_REUSEADDR, 1)
-    print(f"[bridge] Platoon Bridge Server listening on {host}:{port}")
-    print("[bridge] Initial state:")
-    for pid, pl in _platoons.items():
-        members = ", ".join(f"{m['vehicle_id']}({m['role']})" for m in pl["members"])
-        print(f"  {pid} → {pl['destination_id']}  [{members}]")
-    print()
-    try:
-        server.serve_forever()
-    except KeyboardInterrupt:
-        print("\n[bridge] Shutting down.")
-
+    server = HTTPServer(("0.0.0.0", 18801), Handler)
+    print("[bridge] Started on 18801"); server.serve_forever()
 
 if __name__ == "__main__":
     main()

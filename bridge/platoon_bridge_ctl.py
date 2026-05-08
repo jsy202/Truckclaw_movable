@@ -26,11 +26,12 @@ def _http(method: str, url: str, payload: dict | None = None) -> dict:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="CLI for the OpenClaw platoon bridge server")
-    parser.add_argument("--base-url", default="http://host.docker.internal:18801")
+    parser.add_argument("--base-url", default="http://127.0.0.1:18801")
     sub = parser.add_subparsers(dest="command", required=True)
 
     sub.add_parser("health")
     sub.add_parser("snapshot")
+    sub.add_parser("readiness")
 
     platoon = sub.add_parser("platoon")
     platoon.add_argument("platoon_id")
@@ -64,6 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
     commit = sub.add_parser("commit")
     commit.add_argument("request_id")
 
+    retry = sub.add_parser("retry")
+    retry.add_argument("request_id")
+
     return parser
 
 
@@ -75,6 +79,8 @@ def main() -> int:
         payload = _http("GET", f"{base}/health")
     elif args.command == "snapshot":
         payload = _http("GET", f"{base}/snapshot")
+    elif args.command == "readiness":
+        payload = _http("GET", f"{base}/readiness")
     elif args.command == "platoon":
         payload = _http("GET", f"{base}/platoons/{parse.quote(args.platoon_id)}")
     elif args.command == "candidates":
@@ -116,6 +122,8 @@ def main() -> int:
         )
     elif args.command == "commit":
         payload = _http("POST", f"{base}/transfers/{parse.quote(args.request_id)}/commit", {})
+    elif args.command == "retry":
+        payload = _http("POST", f"{base}/transfers/{parse.quote(args.request_id)}/retry", {})
     else:
         raise SystemExit(f"Unknown command: {args.command}")
 

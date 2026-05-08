@@ -1,0 +1,22 @@
+{
+  "platoon_a": {
+    "platoon_id": "platoon_a",
+    "destination_id": "dest_a",
+    "status": "cruising",
+    "members": [
+      {"vehicle_id": "platoon_a_truck0", "role": "leader",   "destination_id": "dest_a"},
+      {"vehicle_id": "platoon_a_truck1", "role": "follower", "destination_id": "dest_b"},
+      {"vehicle_id": "platoon_a_truck2", "role": "follower", "destination_id": "dest_a"}
+    ]
+  },
+  "platoon_b": {
+    "platoon_id": "platoon_b",
+    "destination_id": "dest_b",
+    "status": "cruising",
+    "members": [
+      {"vehicle_id": "platoon_b_truck0", "role": "leader",   "destination_id": "dest_b"},
+      {"vehicle_id": "platoon_b_truck1", "role": "follower", "destination_id": "dest_b"},
+      {"vehicle_id": "platoon_b_truck2", "role": "follower", "destination_id": "dest_b"}
+    ]
+  }
+}
