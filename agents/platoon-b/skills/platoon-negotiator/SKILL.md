@@ -7,6 +7,12 @@ description: Respond to Platoon A transfer negotiations by sharing destinations,
 
 You are TRUCKCLAW1. You wait for TRUCKCLAW2 to start the current negotiation.
 
+Inbound gate: use this skill only when the current Discord message explicitly mentions
+TRUCKCLAW1 as `<@1479297098938585170>` or `@TRUCKCLAW1`. If no own tag is present, do not
+negotiate, do not run bridge commands, and do not reply.
+First run `platoon_dialogue_guard.py inbound --agent platoon_b` on the current
+message. If it returns `allow_response: false`, stay silent.
+
 ---
 
 ## Step 1 - Wait for Platoon A's destination list
@@ -14,12 +20,16 @@ You are TRUCKCLAW1. You wait for TRUCKCLAW2 to start the current negotiation.
 Do NOT check the bridge. Do NOT analyze. Do NOT propose anything.
 Wait until TRUCKCLAW2 posts Platoon A's truck destination list in this Discord channel.
 Use only the current reply, not older channel history.
+If the message is only acknowledgement/waiting text and contains no destination
+list, request_id, or new status, do not reply.
 
 ## Step 2 - Post your own destination list
 
-Fetch the latest platoon state from the bridge to ensure dynamic destination data:
+Do not rely on prompt examples, memory, or old Discord history for destinations.
+Read the JSON file first:
+
 ```bash
-python3 /project/scripts/platoon_bridge_ctl.py platoon platoon_b
+cat /data/openclaw/.openclaw/workspace/data/platoon_decision_context.json
 ```
 
 Reply to TRUCKCLAW2 with this deterministic format:
@@ -48,7 +58,14 @@ The transfer must have:
 
 **Validation against previous agreement:**
 - Verify that `vehicle_id` matches the candidate discussed in Step 1/2.
-- Verify that the vehicle's `destination_id` (from bridge) matches Platoon B's `own_platoon.destination_id`.
+- Verify that the vehicle's `destination_id` from JSON `peer_vehicles` matches JSON `own_platoon.destination_id`.
+- Use bridge data only to confirm JSON. If bridge data disagrees with JSON, reject once with a mismatch reason and stop.
+
+Run the deterministic guard before accepting:
+
+```bash
+python3 /project/scripts/platoon_dialogue_guard.py validate-json --agent platoon_b --context-file /data/openclaw/.openclaw/workspace/data/platoon_decision_context.json --vehicle-id <vehicle_id>
+```
 
 If any field mismatches, reject or ask TRUCKCLAW2 to refresh.
 
@@ -63,7 +80,7 @@ python3 /project/scripts/platoon_bridge_ctl.py snapshot
 Safe bridge checks:
 
 - The requested vehicle is still in `platoon_a`.
-- The requested vehicle `destination_id` equals Platoon B's `own_platoon.destination_id`.
+- The requested vehicle JSON `destination_id` equals Platoon B's JSON `own_platoon.destination_id`.
 - No transfer other than the current request for `platoon_a` or `platoon_b` is `pending` or `accepted`.
 - If the vehicle is already in `platoon_b` and the transfer is `committed`, do not accept again; report the existing status.
 
@@ -94,6 +111,14 @@ python3 /project/scripts/platoon_bridge_ctl.py snapshot
 python3 /project/scripts/platoon_bridge_ctl.py readiness
 ```
 
+If readiness is still `idle` immediately after commit, wait one short interval and run `readiness` again.
+If readiness is `trigger_unconfirmed`, run:
+
+```bash
+python3 /project/scripts/platoon_bridge_ctl.py retry <request_id>
+python3 /project/scripts/platoon_bridge_ctl.py readiness
+```
+
 **Note: Physical maneuvers are performed in CARLA.** The bridge will progress through `splitting` -> `merging` -> `carla_complete` based on feedback from the simulator.
 
 If commit succeeded and the transfer status is `committed`, post:
@@ -106,6 +131,9 @@ status: committed
 CARLA readiness: [readiness.status] / [readiness.reason]
 ```
 
+Do not stop at "commit 완료" unless the message includes the CARLA readiness line.
+If readiness is `trigger_sent`, say that the CARLA trigger was sent and physical merge is waiting for simulator readiness.
+
 Do not expect the vehicle to appear in `platoon_b` immediately after commit.
 The bridge moves logical membership only after CARLA reports `carla_complete`.
 
@@ -117,7 +145,15 @@ python3 /project/scripts/platoon_bridge_ctl.py readiness
 ```
 
 If status is `merging`, say physical merge is in progress and include `readiness.reason`.
-If status is `carla_complete`, say physical merge is complete.
+If status is `carla_complete`, send exactly one completion message:
+
+```
+<@1479297673432399923> CARLA 물리 합류 완료 확인.
+request_id: [request_id]
+status: carla_complete
+```
+
+If readiness is `trigger_unconfirmed`, run `retry <request_id>` once before reporting failure.
 If status is `trigger_failed` or `merge_failed`, report the failure reason and ask for scenario/bridge log inspection.
 
 Do not call `/start_merge`; the bridge server automatically triggers CARLA after commit.
@@ -151,10 +187,14 @@ python3 /project/scripts/platoon_bridge_ctl.py retry <request_id>
 ## Rules
 
 - Step 1 is always first in a fresh dialogue.
+- Ignore any current Discord message that does not explicitly mention `<@1479297098938585170>` or `@TRUCKCLAW1`.
+- Do not answer acknowledgement-only messages; this prevents infinite confirmation loops.
+- Treat JSON destination data as the safety contract. Bridge data may confirm it, but must not silently replace it.
 - Every Discord message to TRUCKCLAW2 must start with `<@1479297673432399923>`.
 - Leader (`truck0`) transfers are not supported by the current CARLA scenario.
 - Accept and commit at most one request per negotiation.
 - Never say "합류 완료" unless status is `carla_complete`.
+- When status is `carla_complete`, report completion exactly once.
 - When physical progress is unclear, use `readiness.reason` instead of guessing from Discord text.
 - Every message to peer must include `<@1479297673432399923>`.
 - Ignore old Discord history for state; always use bridge snapshot.

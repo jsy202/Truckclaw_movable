@@ -1,8 +1,8 @@
 {
   "speeds": {
-    "sync_speed_kmh": 20.0,
+    "sync_speed_kmh": 18.0,
     "post_merge_speed_kmh": 40.0,
-    "approach_fast_kmh": 30.0,
+    "approach_fast_kmh": 38.0,
     "open_gap_delta_kmh": 6.0,
     "lane_change_boost_kmh": 10.0,
     "catchup_kmh": 18.0,
@@ -12,8 +12,8 @@
     "target_gap_m": 13.0,
     "follow_dist_m": 13.0,
     "normal_follow_gap_m": 12.0,
-    "open_gap_m": 24.0,
-    "open_gap_ready_m": 22.0,
+    "open_gap_m": 20.0,
+    "open_gap_ready_m": 18.0,
     "platoon_spacing_m": 18.0,
     "merge_distance_limit_m": 60.0,
     "lane_center_tolerance_m": 3.0

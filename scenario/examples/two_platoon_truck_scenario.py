@@ -37,16 +37,18 @@ PLATOON_SIZE = 3
 PLATOON_SPACING_M = float(_gaps.get("platoon_spacing_m", 18.0))
 # CARLA center-to-center gap settles about 1 m above this controller target.
 NORMAL_FOLLOW_GAP_M = float(_gaps.get("normal_follow_gap_m", 12.0))
-OPEN_GAP_M = float(_gaps.get("open_gap_m", 24.0))
-OPEN_GAP_READY_M = float(_gaps.get("open_gap_ready_m", 22.0))
-SYNC_SPEED_KMH = float(_speeds.get("sync_speed_kmh", 20.0))
-APPROACH_FAST_KMH = float(_speeds.get("approach_fast_kmh", 30.0))
+OPEN_GAP_M = float(_gaps.get("open_gap_m", 20.0))
+OPEN_GAP_READY_M = float(_gaps.get("open_gap_ready_m", 18.0))
+SYNC_SPEED_KMH = float(_speeds.get("sync_speed_kmh", 18.0))
+APPROACH_FAST_KMH = float(_speeds.get("approach_fast_kmh", 38.0))
+MERGE_MIN_SPEED_KMH = float(_speeds.get("merge_min_speed_kmh", 15.0))
 TARGET_GAP_M = float(_gaps.get("target_gap_m", 13.0))
 FOLLOW_DIST_M = float(_gaps.get("follow_dist_m", 13.0))
 LANE_CENTER_TOLERANCE_M = 1.0 # Stricter for PID
 MERGE_TIMEOUT_S = 400.0
-READY_OFFSET_TOL_M = 8.0
+READY_OFFSET_TOL_M = 12.0
 ADJACENT_LANE_MAX_M = 9.0
+LANE_STEP_COMPLETE_M = 0.9
 
 # ── spawns ──
 _p1_s = _spawns.get("p1_spawn", {"x": -4000.0, "y": 136.0, "z": 0.3, "pitch": 0.0, "yaw": 0.2, "roll": 0.0})
@@ -66,6 +68,19 @@ def _bridge_get_ready_transfer():
             if not ready: return None
             ready.sort(key=lambda t: t.get("created_at", ""))
             return ready[0]
+    except Exception: return None
+
+def _bridge_get_negotiating_transfer():
+    try:
+        with urllib.request.urlopen(f"{BRIDGE_URL}/snapshot", timeout=1) as r:
+            data = json.loads(r.read().decode())
+            active = [
+                t for t in data.get("transfers", {}).values()
+                if t.get("status") in ("pending", "accepted", "committed", "merging")
+            ]
+            if not active: return None
+            active.sort(key=lambda t: t.get("created_at", ""))
+            return active[0]
     except Exception: return None
 
 _merge_trigger_event = threading.Event()
@@ -134,6 +149,38 @@ def _advance_waypoint(wpt, dist):
         curr = _select_straight_waypoint(nxt, curr.transform.rotation.yaw)
         rem -= step
     return curr
+
+def _same_lane(a, b):
+    return bool(a and b and a.road_id == b.road_id and a.lane_id == b.lane_id)
+
+def _driving_adjacent_lanes(wpt):
+    lanes = []
+    for getter in (wpt.get_left_lane, wpt.get_right_lane):
+        try:
+            lane = getter()
+        except RuntimeError:
+            lane = None
+        if lane and lane.lane_type == carla.LaneType.Driving:
+            lanes.append(lane)
+    return lanes
+
+def _lane_distance(a, b):
+    al = a.transform.location; bl = b.transform.location
+    return float(np.hypot(al.x - bl.x, al.y - bl.y))
+
+def _one_lane_step_target(cmap, ego, receiver_ref_wpt, signed_offset_m):
+    ego_wpt = cmap.get_waypoint(ego._carla_vehicle.get_location(), project_to_road=True, lane_type=carla.LaneType.Driving)
+    receiver_target = _align_reference_waypoint(receiver_ref_wpt, signed_offset_m) or receiver_ref_wpt
+    if not ego_wpt or not receiver_target:
+        return receiver_target
+    if _same_lane(ego_wpt, receiver_target):
+        return receiver_target
+
+    adjacent = _driving_adjacent_lanes(ego_wpt)
+    if not adjacent:
+        return ego_wpt
+    step_lane = min(adjacent, key=lambda lane: _lane_distance(lane, receiver_target))
+    return _align_reference_waypoint(step_lane, signed_offset_m) or step_lane
 
 def _align_reference_waypoint(reference_wpt, signed_offset_m):
     if signed_offset_m > 0.0:
@@ -289,9 +336,10 @@ class BidirectionalTransferCoordinator:
         self.donor_p.simulation.remove_platoon(new_ps)
         self.detached_p = None
         self.detached_v.set_autopilot(False, self.tm_port)
+        self.detached_v._carla_vehicle.apply_control(carla.VehicleControl(throttle=0.25, brake=0.0, hand_brake=False))
         self.pid = nav_controller.VehiclePIDController(self.detached_v._carla_vehicle, 
-            args_lateral={"K_P": 2.5, "K_I": 0.1, "K_D": 0.2, "dt": DT}, # Aggressive lateral
-            args_longitudinal={"K_P": 0.5, "K_I": 0.15, "K_D": 0.05, "dt": DT})
+            args_lateral={"K_P": 3.2, "K_I": 0.1, "K_D": 0.25, "dt": DT},
+            args_longitudinal={"K_P": 0.65, "K_I": 0.15, "K_D": 0.05, "dt": DT})
         _bridge_post(f"/transfers/{self.request_id}/merging")
         self.state = TransferState.LC; self.ticks = 0; print(f"[transfer] Split target {t['vehicle_id']} -> LC started")
         return True
@@ -302,17 +350,21 @@ class BidirectionalTransferCoordinator:
         tail = self.rec_p[-1]; off = signed_longitudinal_offset(tail, self.detached_v); rs = tail.speed * 3.6
         
         if self.state == TransferState.LC:
-            # Direct target on receiver lane
+            # Move at most one lane per step; never aim diagonally across multiple lanes.
             rec_wpt = self.cmap.get_waypoint(tail._carla_vehicle.get_location())
-            target_wpt = _align_reference_waypoint(rec_wpt, off)
+            target_wpt = _one_lane_step_target(self.cmap, self.detached_v, rec_wpt, off)
             if not target_wpt: target_wpt = rec_wpt
-            target_wpt = _advance_waypoint(target_wpt, 12.0)
+            target_wpt = _advance_waypoint(target_wpt, 18.0)
             
-            v_cmd = rs + float(np.clip((off - TARGET_GAP_M) * 0.6, -8.0, 10.0))
+            v_cmd = rs + float(np.clip((off - TARGET_GAP_M) * 0.85, -10.0, 16.0))
+            v_cmd = max(MERGE_MIN_SPEED_KMH, v_cmd)
             control = self.pid.run_step(float(v_cmd), target_wpt)
+            control.hand_brake = False
             self.detached_v._carla_vehicle.apply_control(control)
             
-            if abs(signed_lateral_offset(tail, self.detached_v)) < 0.8 and off > 5.0:
+            rec_now = self.cmap.get_waypoint(tail._carla_vehicle.get_location(), project_to_road=True, lane_type=carla.LaneType.Driving)
+            ego_now = self.cmap.get_waypoint(self.detached_v._carla_vehicle.get_location(), project_to_road=True, lane_type=carla.LaneType.Driving)
+            if _same_lane(ego_now, rec_now) and abs(signed_lateral_offset(tail, self.detached_v)) < LANE_STEP_COMPLETE_M and off > 5.0:
                 print(f"[transfer] LC complete -> JOINING off={off:.1f}m")
                 self.finalize_join()
 
@@ -320,9 +372,12 @@ class BidirectionalTransferCoordinator:
             rec_wpt = self.cmap.get_waypoint(tail._carla_vehicle.get_location())
             target_wpt = _align_reference_waypoint(rec_wpt, off)
             if not target_wpt: target_wpt = rec_wpt
-            target_wpt = _advance_waypoint(target_wpt, 12.0)
-            v_cmd = rs + float(np.clip((off - TARGET_GAP_M) * 0.7, -8.0, 10.0))
-            self.detached_v._carla_vehicle.apply_control(self.pid.run_step(float(v_cmd), target_wpt))
+            target_wpt = _advance_waypoint(target_wpt, 18.0)
+            v_cmd = rs + float(np.clip((off - TARGET_GAP_M) * 0.9, -10.0, 16.0))
+            v_cmd = max(MERGE_MIN_SPEED_KMH, v_cmd)
+            control = self.pid.run_step(float(v_cmd), target_wpt)
+            control.hand_brake = False
+            self.detached_v._carla_vehicle.apply_control(control)
             if off >= TARGET_GAP_M - 1.0 and tail.distance_to(self.detached_v) < TARGET_GAP_M + 2.0:
                 self.finalize_join()
 
@@ -385,6 +440,19 @@ def main():
             donor_speed = receiver_speed = SYNC_SPEED_KMH
         donor[0].controller.set_target_speed(donor_speed)
         receiver[0].controller.set_target_speed(receiver_speed)
+
+    def active_transfer_from_bridge(t):
+        if not t:
+            return None
+        fp = t.get("from_platoon_id")
+        tp = t.get("to_platoon_id")
+        vid = t.get("vehicle_id")
+        if fp not in coord.platoons or tp not in coord.platoons or not vid:
+            return None
+        for i, _ in enumerate(coord.platoons[fp]):
+            if f"{fp}_truck{i}" == vid:
+                return {"vehicle_id": vid, "from": fp, "to": tp, "idx": i}
+        return None
     
     try:
         while True:
@@ -395,6 +463,16 @@ def main():
                 vid, fp, tp, idx = m[key]; _auto_bridge_commit(vid, fp, tp)
                 active_transfer = {"vehicle_id": vid, "from": fp, "to": tp, "idx": idx}
                 print(f"[trigger] {key}: {vid} 이송 시작")
+
+            if coord.state == TransferState.CRUISE:
+                if _merge_trigger_event.is_set():
+                    _merge_trigger_event.clear()
+                    print("[trigger] bridge HTTP trigger received")
+                if not active_transfer:
+                    bridge_transfer = active_transfer_from_bridge(_bridge_get_negotiating_transfer())
+                    if bridge_transfer:
+                        active_transfer = bridge_transfer
+                        print(f"[trigger] bridge negotiation detected: {active_transfer['vehicle_id']} pre-align started")
 
             apply_approach_control()
             coord.try_start(step); coord.update()

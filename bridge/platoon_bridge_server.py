@@ -17,7 +17,7 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import copy
 
-CARLA_TRIGGER_URL = "http://127.0.0.1:18802/start_merge"
+CARLA_TRIGGER_URL = os.environ.get("CARLA_TRIGGER_URL", "http://127.0.0.1:18802/start_merge")
 ACTIVE_TRANSFER_STATUSES = ("pending", "accepted", "committed", "merging", "splitting")
 FAILURE_TRANSFER_STATUSES = ("trigger_failed", "merge_failed")
 DEFAULT_CONFIG_PATHS = [
@@ -159,8 +159,24 @@ def _notify_carla_trigger(request_id: str):
             payload = json.dumps({"request_id": request_id}).encode("utf-8")
             req = urllib.request.Request(CARLA_TRIGGER_URL, data=payload, method="POST", headers={"Content-Type": "application/json"})
             urllib.request.urlopen(req, timeout=2)
+            with _lock:
+                _readiness.update({
+                    "status": "trigger_sent",
+                    "merge_ready": False,
+                    "reason": f"CARLA trigger sent to {CARLA_TRIGGER_URL}",
+                    "request_id": request_id,
+                    "updated_at": _now(),
+                })
             print(f"[bridge] CARLA trigger sent ({request_id})")
         except Exception as e:
+            with _lock:
+                _readiness.update({
+                    "status": "trigger_unconfirmed",
+                    "merge_ready": False,
+                    "reason": f"CARLA trigger POST failed: {e}",
+                    "request_id": request_id,
+                    "updated_at": _now(),
+                })
             print(f"[bridge] CARLA trigger failed: {e}")
     threading.Thread(target=_do, daemon=True).start()
 
@@ -255,7 +271,7 @@ class Handler(BaseHTTPRequestHandler):
                 else: self._err(404, "not found")
             elif "/retry" in p:
                 rid = p.split("/")[-2]; t = _transfers.get(rid)
-                if t: t["status"] = "pending"; self._ok(t)
+                if t: t["status"] = "committed"; _notify_carla_trigger(rid); self._ok(t)
                 else: self._err(404, "not found")
             elif "/splitting" in p:
                 rid = p.split("/")[-2]; t = _transfers.get(rid)

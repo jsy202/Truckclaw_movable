@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "map": "Town06",
-  "discord_channel": "platoon-transfer",
+  "discord_channel": "1503300024858050602",
   "bot_name": "openclaw-platoon-b",
   "bot_display_name": "TRUCKCLAW1",
   "platoon_id": "platoon_b",
@@ -13,7 +13,8 @@
     "carla_trigger_owner": "bridge"
   },
   "discord": {
-    "channel": "platoon-transfer",
+    "channel": "1503300024858050602",
+    "channel_id": "1503300024858050602",
     "own_discord_id": "<@1479297098938585170>",
     "peer_discord_id": "<@1479297673432399923>"
   },
