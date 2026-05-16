@@ -1,4 +1,17 @@
+# docker-compose.yml — Leader Rotation + DinD 구조
+#
+# Host
+#   └── vehicle-truck0 (Docker + /var/run/docker.sock 공유)
+#         └── openclaw-truck0  ← 현재 선두 OpenClaw
+#   └── vehicle-truck1 (Docker + /var/run/docker.sock 공유)
+#         └── openclaw-truck1  ← 선두 교체 후 신규 OpenClaw (replicator가 기동)
+#   └── vehicle-truck2 (Docker)
+#         (truck2는 순수 CACC 팔로워 — OpenClaw 없음)
+#   └── bridge-server  — 협상 상태 REST API (18801)
+
 services:
+
+  # ── 브리지 서버 ─────────────────────────────────────────────────────────────
   bridge-server:
     image: python:3.10-slim
     container_name: platoon-bridge-server
@@ -11,32 +24,82 @@ services:
     network_mode: host
     restart: unless-stopped
 
+  # ── vehicle-truck0 (현재 선두, DinD) ────────────────────────────────────────
+  vehicle-truck0:
+    build:
+      context: .
+      dockerfile: vehicle/Dockerfile
+    container_name: vehicle-truck0
+    environment:
+      TRUCK_ID: truck0
+      OPENCLAW_DATA_DIR: /data/openclaw
+      DISCORD_BOT_TOKEN: ${TRUCK0_DISCORD_BOT_TOKEN}
+      OPENCLAW_GATEWAY_TOKEN: ${TRUCK0_OPENCLAW_GATEWAY_TOKEN}
+      OPENCLAW_GATEWAY_PORT: 18789
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock   # DinD 핵심
+      - ${TRUCK0_CONFIG_DIR:-./.openclaw-truck0}:/data/openclaw
+      - ./.transfer:/transfer                        # V2V 전송 버퍼
+      - ./bridge:/project/scripts:ro
+      - ./openclaw_migration:/project/openclaw_migration:ro
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - bridge-server
+
+  # ── vehicle-truck1 (다음 선두 후보, DinD) ────────────────────────────────────
+  # 평소에는 openclaw 없음. 선두 교체 시 replicator가 openclaw-truck1 기동.
+  vehicle-truck1:
+    build:
+      context: .
+      dockerfile: vehicle/Dockerfile
+    container_name: vehicle-truck1
+    environment:
+      TRUCK_ID: truck1
+      OPENCLAW_DATA_DIR: /data/openclaw
+      DISCORD_BOT_TOKEN: ${TRUCK1_DISCORD_BOT_TOKEN}
+      OPENCLAW_GATEWAY_TOKEN: ${TRUCK1_OPENCLAW_GATEWAY_TOKEN}
+      OPENCLAW_GATEWAY_PORT: 18790
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${TRUCK1_CONFIG_DIR:-./.openclaw-truck1}:/data/openclaw
+      - ./.transfer:/transfer
+      - ./bridge:/project/scripts:ro
+      - ./openclaw_migration:/project/openclaw_migration:ro
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - bridge-server
+
+  # ── (legacy) openclaw-platoon-a / platoon-b — 기존 두 군집 시나리오용 ──────
   openclaw-platoon-a:
     image: ${OPENCLAW_IMAGE:-openclaw:local}
     container_name: openclaw-platoon-a
+    profiles: ["two-platoon"]          # 기본 실행에서 제외
     environment:
       HOME: /data/openclaw
-      DISCORD_BOT_TOKEN: ${PLATOON_A_DISCORD_BOT_TOKEN}
-      OPENCLAW_GATEWAY_TOKEN: ${PLATOON_A_OPENCLAW_GATEWAY_TOKEN}
+      DISCORD_BOT_TOKEN: ${PLATOON_A_DISCORD_BOT_TOKEN:-}
+      OPENCLAW_GATEWAY_TOKEN: ${PLATOON_A_OPENCLAW_GATEWAY_TOKEN:-}
     volumes:
       - ${PLATOON_A_CONFIG_DIR:-./.openclaw-platoon-a}:/data/openclaw
-      - ./bridge:/project/scripts
+      - ./bridge:/project/scripts:ro
       - ./platoon_destinations.json:/project/platoon_destinations.json:ro
-    ports:
-      - "18789:18789"
+    network_mode: host
     restart: unless-stopped
 
   openclaw-platoon-b:
     image: ${OPENCLAW_IMAGE:-openclaw:local}
     container_name: openclaw-platoon-b
+    profiles: ["two-platoon"]
     environment:
       HOME: /data/openclaw
-      DISCORD_BOT_TOKEN: ${PLATOON_B_DISCORD_BOT_TOKEN}
-      OPENCLAW_GATEWAY_TOKEN: ${PLATOON_B_OPENCLAW_GATEWAY_TOKEN}
+      DISCORD_BOT_TOKEN: ${PLATOON_B_DISCORD_BOT_TOKEN:-}
+      OPENCLAW_GATEWAY_TOKEN: ${PLATOON_B_OPENCLAW_GATEWAY_TOKEN:-}
     volumes:
       - ${PLATOON_B_CONFIG_DIR:-./.openclaw-platoon-b}:/data/openclaw
-      - ./bridge:/project/scripts
+      - ./bridge:/project/scripts:ro
       - ./platoon_destinations.json:/project/platoon_destinations.json:ro
-    ports:
-      - "18790:18790"
+    network_mode: host
     restart: unless-stopped

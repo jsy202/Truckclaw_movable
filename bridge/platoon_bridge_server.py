@@ -17,7 +17,9 @@ from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import copy
 
-CARLA_TRIGGER_URL = os.environ.get("CARLA_TRIGGER_URL", "http://127.0.0.1:18802/start_merge")
+CARLA_TRIGGER_URL        = os.environ.get("CARLA_TRIGGER_URL",        "http://127.0.0.1:18802/start_merge")
+CARLA_REPLICATE_URL      = os.environ.get("CARLA_REPLICATE_URL",      "http://127.0.0.1:18802/start_replicate")
+LEADER_ROTATION_URL      = os.environ.get("LEADER_ROTATION_URL",      "http://127.0.0.1:18803/leader_rotation")
 ACTIVE_TRANSFER_STATUSES = ("pending", "accepted", "committed", "merging", "splitting")
 FAILURE_TRANSFER_STATUSES = ("trigger_failed", "merge_failed")
 DEFAULT_CONFIG_PATHS = [
@@ -62,6 +64,7 @@ def _load_initial_state():
 _lock = threading.Lock()
 _platoons = _load_initial_state()
 _transfers: dict = {}
+_leader_rotation: dict = {}   # 선두 교체 이벤트 이력
 
 def _initial_readiness():
     return {
@@ -123,6 +126,57 @@ def _complete_logical_transfer(t: dict):
     return from_platoon, to_platoon
 
 MOCK_MODE = os.environ.get("MOCK_CARLA", "false").lower() == "true" # Set MOCK_CARLA=true to simulate progress without CARLA
+
+def _notify_carla_leader_rotation(old_leader: str, new_leader: str):
+    """브리지 → CARLA 18803 선두 교체 트리거."""
+    def _do():
+        try:
+            payload = json.dumps({
+                "old_leader": old_leader,
+                "new_leader": new_leader,
+            }).encode("utf-8")
+            req = urllib.request.Request(
+                LEADER_ROTATION_URL, data=payload, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            urllib.request.urlopen(req, timeout=2)
+            print(f"[bridge] leader_rotation 트리거 전송 ({old_leader} → {new_leader})")
+        except Exception as e:
+            print(f"[bridge] leader_rotation 트리거 실패: {e}")
+    threading.Thread(target=_do, daemon=True).start()
+
+def _promote_new_leader(old_leader_vehicle_id: str):
+    """브리지 platoon 상태에서 선두 교체 반영."""
+    for p in _platoons.values():
+        for m in p["members"]:
+            if m["vehicle_id"] == old_leader_vehicle_id and m["role"] == "leader":
+                m["role"] = "follower"
+                # 다음 멤버를 leader로 승격
+                idx = p["members"].index(m)
+                if idx + 1 < len(p["members"]):
+                    p["members"][idx + 1]["role"] = "leader"
+                    print(f"[bridge] {p['members'][idx+1]['vehicle_id']} 선두 승격")
+                # 구 선두를 tail로 이동
+                p["members"].remove(m)
+                p["members"].append(m)
+                print(f"[bridge] {old_leader_vehicle_id} → tail 이동")
+                return True
+    return False
+
+def _notify_carla_replicate(vehicle_id: str):
+    """OpenClaw이 복제 명령 → 브리지가 CARLA 18802/start_replicate 호출."""
+    def _do():
+        try:
+            payload = json.dumps({"vehicle_id": vehicle_id}).encode("utf-8")
+            req = urllib.request.Request(
+                CARLA_REPLICATE_URL, data=payload, method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            urllib.request.urlopen(req, timeout=2)
+            print(f"[bridge] CARLA replicate trigger sent (vehicle={vehicle_id})")
+        except Exception as e:
+            print(f"[bridge] CARLA replicate trigger failed: {e}")
+    threading.Thread(target=_do, daemon=True).start()
 
 def _notify_carla_trigger(request_id: str):
     if MOCK_MODE:
@@ -212,8 +266,9 @@ class Handler(BaseHTTPRequestHandler):
         p = self.path.rstrip("/")
         with _lock:
             if p == "/health": self._ok({"ok": True})
-            elif p == "/snapshot": self._ok({"platoons": _platoons, "transfers": _transfers, "readiness": _readiness})
+            elif p == "/snapshot": self._ok({"platoons": _platoons, "transfers": _transfers, "readiness": _readiness, "leader_rotation": _leader_rotation})
             elif p == "/readiness": self._ok(_readiness)
+            elif p == "/leader_rotation": self._ok(_leader_rotation)
             elif p.startswith("/transfers/"):
                 rid = p.split("/")[-1]
                 t = _transfers.get(rid)
@@ -240,9 +295,36 @@ class Handler(BaseHTTPRequestHandler):
             elif p == "/reload":
                 _platoons = _load_initial_state()
                 _transfers = {}
+                _leader_rotation.clear()
                 _readiness = _initial_readiness()
                 _readiness["updated_at"] = _now()
                 self._ok({"ok": True})
+            elif p == "/replicate":
+                # OpenClaw 에이전트가 복제 명령
+                vid = body.get("vehicle_id", "platoon_a_truck0")
+                _notify_carla_replicate(vid)
+                self._ok({"ok": True, "vehicle_id": vid, "status": "replicate_triggered"})
+            elif p == "/leader_rotation":
+                # 선두 교체 요청: POST /leader_rotation {"old_leader":"truck0","new_leader":"truck1"}
+                old_l = body.get("old_leader", "truck0")
+                new_l = body.get("new_leader", "truck1")
+                status = body.get("status", "started")
+                _leader_rotation.update({
+                    "old_leader": old_l,
+                    "new_leader": new_l,
+                    "status": status,
+                    "updated_at": _now(),
+                })
+                if status == "started":
+                    # 브리지 논리 상태: 선두 교체 반영
+                    _promote_new_leader(f"platoon_a_{old_l}")
+                    # CARLA 18803 트리거
+                    _notify_carla_leader_rotation(old_l, new_l)
+                    print(f"[bridge] leader_rotation 시작: {old_l} → {new_l}")
+                elif status == "complete":
+                    _leader_rotation["status"] = "complete"
+                    print(f"[bridge] leader_rotation 완료: {new_l} 신규 선두")
+                self._ok(_leader_rotation)
             elif p == "/transfers":
                 vid, fp, tp = body.get("vehicle_id"), body.get("from_platoon_id"), body.get("to_platoon_id")
                 if not vid or not fp or not tp: return self._err(400, "missing fields")

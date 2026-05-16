@@ -1,0 +1,31 @@
+{
+  "schema_version": 1,
+  "map": "Town06",
+  "_note": "truck1 신규 선두 설정. 구 선두(truck0) 세션 이전 후 적용.",
+  "platoons": {
+    "platoon_a": {
+      "destination_id": "dest_a",
+      "leader_vehicle_id": "platoon_a_truck1",
+      "ordered_members": ["platoon_a_truck1", "platoon_a_truck2", "platoon_a_truck0"]
+    }
+  },
+  "vehicles": {
+    "platoon_a_truck0": {
+      "platoon_id": "platoon_a",
+      "role": "follower",
+      "destination_id": "dest_a",
+      "note": "구 선두 — 후미로 이동"
+    },
+    "platoon_a_truck1": {
+      "platoon_id": "platoon_a",
+      "role": "leader",
+      "destination_id": "dest_a",
+      "note": "신규 선두"
+    },
+    "platoon_a_truck2": {
+      "platoon_id": "platoon_a",
+      "role": "follower",
+      "destination_id": "dest_a"
+    }
+  }
+}
