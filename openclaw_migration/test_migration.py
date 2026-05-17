@@ -1,86 +1,111 @@
 #!/usr/bin/env python3
 """
 OpenClaw 선두 이전 테스트 — CARLA 없이 실행 가능
-truck0(현재 선두) → truck1(신 선두) OpenClaw 세션 이전 전 과정 테스트
+=================================================
+테스트 순서:
+  1. openclaw-truck0 컨테이너 실행 (구 선두)
+  2. 컨테이너 모니터 시작
+  3. 선두 교체 시뮬레이션 (5초 후 자동)
+  4. Bundle 1: openclaw_base.tar (최초 1회)
+  5. Bundle 2: openclaw_session.tar (세션 캡처 + V2V 전송)
+  6. openclaw-truck1 실행 확인 (신 선두)
+  7. openclaw-truck0 삭제 확인
 
 실행:
   cd /home/jsy202/Downloads/Truckclaw-improve
   python3 openclaw_migration/test_migration.py
   python3 openclaw_migration/test_migration.py --reset
+  python3 openclaw_migration/test_migration.py --no-docker  # docker 없이 로직만 테스트
 """
 from __future__ import annotations
 
-import os, sys, time, threading, subprocess, shutil
+import argparse
+import os
+import shutil
+import subprocess
+import sys
+import time
+import threading
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from openclaw_migration.replicator import LeaderMigrator, ensure_base_tar
-from openclaw_migration.monitor    import ContainerMonitor
-from openclaw_migration.reset      import reset
-
 # .env 로드
-for name in [".env.leader-rotation", ".env"]:
-    p = PROJECT_ROOT / name
-    if p.exists():
-        for line in p.read_text().splitlines():
-            line = line.strip()
-            if line and not line.startswith("#") and "=" in line:
-                k, _, v = line.partition("=")
-                os.environ.setdefault(k.strip(), v.strip())
-        break
+def _load_env():
+    for name in [".env.leader-rotation", ".env"]:
+        p = PROJECT_ROOT / name
+        if p.exists():
+            for line in p.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    k, _, v = line.partition("=")
+                    os.environ.setdefault(k.strip(), v.strip())
+            break
+_load_env()
 
 TRUCK0_DISCORD = os.environ.get("TRUCK0_DISCORD_BOT_TOKEN", "")
 TRUCK0_GATEWAY = os.environ.get("TRUCK0_OPENCLAW_GATEWAY_TOKEN", "")
 TRUCK1_DISCORD = os.environ.get("TRUCK1_DISCORD_BOT_TOKEN", "")
 TRUCK1_GATEWAY = os.environ.get("TRUCK1_OPENCLAW_GATEWAY_TOKEN", "")
 OPENAI_KEY     = os.environ.get("OPENAI_API_KEY", "")
+OPENCLAW_IMAGE = os.environ.get("OPENCLAW_IMAGE", "openclaw:local")
 
 
 def _c(color, text):
-    c = {"green":"\033[32m","yellow":"\033[33m","cyan":"\033[36m",
-         "bold":"\033[1m","reset":"\033[0m","red":"\033[31m"}
+    c = {
+        "green":  "\033[32m", "yellow": "\033[33m", "cyan":  "\033[36m",
+        "red":    "\033[31m", "bold":   "\033[1m",  "reset": "\033[0m",
+    }
     return f"{c.get(color,'')}{text}{c['reset']}"
 
 
 def print_banner():
-    print(_c("bold", "\n" + "═"*60))
+    print(_c("bold", "\n" + "═" * 62))
     print(_c("bold", "  OpenClaw 선두 이전 테스트  (CARLA 없이 실행)"))
-    print("═"*60)
+    print("═" * 62)
     print("  테스트 순서:")
-    print("  1. openclaw-truck0 실행 (현재 선두)")
+    print("  1. openclaw-truck0 실행 (구 선두)")
     print("  2. 컨테이너 모니터 시작")
-    print("  3. 선두 교체 시뮬레이션 (3초 후 자동)")
-    print("  4. Bundle 1: openclaw_base.tar (순정, 최초 1회)")
-    print("  5. Bundle 2: openclaw_session.tar (세션+에이전트 파일)")
-    print("  6. V2V 전송 (tx → rx)")
-    print("  7. openclaw-truck1 실행 확인")
-    print("  8. openclaw-truck0 삭제 (합류 완료 시뮬레이션)")
-    print("  --reset 옵션으로 초기화\n")
+    print("  3. 5초 후 선두 교체 시뮬레이션")
+    print("  4. Bundle 1: openclaw_base.tar (순정 이미지)")
+    print("  5. Bundle 2: openclaw_session.tar (세션 이전)")
+    print("  6. openclaw-truck1 실행 확인 (신 선두)")
+    print("  7. openclaw-truck0 삭제 확인")
+    print("  Ctrl-C = 중단\n")
+
+
+def docker_available() -> bool:
+    try:
+        r = subprocess.run(["docker", "info"], capture_output=True, timeout=3)
+        return r.returncode == 0
+    except Exception:
+        return False
+
+
+def image_exists(image: str) -> bool:
+    try:
+        r = subprocess.run(
+            ["docker", "image", "inspect", image],
+            capture_output=True, timeout=3,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
 
 
 def start_truck0_openclaw():
-    """truck0 openclaw 시작 (테스트용 — vehicle 컨테이너 생략)"""
+    """truck0의 openclaw 컨테이너를 직접 실행 (테스트용)."""
     data_dir = PROJECT_ROOT / ".openclaw-truck0"
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    # agents/platoon-a 복사
+    # agents/platoon-a 복사 (없으면)
     src = PROJECT_ROOT / "agents" / "platoon-a"
     if src.exists() and not (data_dir / "SOUL.md").exists():
         shutil.copytree(src, data_dir, dirs_exist_ok=True)
+        print(f"  agents/platoon-a → {data_dir.name}/ 복사 완료")
 
     subprocess.run(["docker", "rm", "-f", "openclaw-truck0"], capture_output=True)
-
-    # openclaw:local 이미지 존재 확인
-    check = subprocess.run(
-        ["docker", "image", "inspect", "openclaw:local"],
-        capture_output=True, text=True,
-    )
-    if check.returncode != 0:
-        print(f"  {_c('yellow','!')} openclaw:local 이미지 없음 — 컨테이너 시작 스킵 (파일 복사만 수행)")
-        return False
-
     cmd = [
         "docker", "run", "-d",
         "--name", "openclaw-truck0",
@@ -92,62 +117,90 @@ def start_truck0_openclaw():
         "-e", "OPENCLAW_GATEWAY_PORT=18789",
         "-v", f"{data_dir.resolve()}:/data/openclaw",
         "-v", f"{str(PROJECT_ROOT/'bridge')}:/project/scripts:ro",
-        "openclaw:local",
+        OPENCLAW_IMAGE,
     ]
-    r = subprocess.run(cmd, capture_output=True, text=True, timeout=10)
+    r = subprocess.run(cmd, capture_output=True, text=True, timeout=15)
     if r.returncode == 0:
         print(f"  {_c('green','✓')} openclaw-truck0 시작됨")
         return True
     else:
-        print(f"  {_c('yellow','!')} openclaw-truck0 시작 실패: {r.stderr.strip()[:80]}")
+        print(f"  {_c('yellow','!')} openclaw-truck0: {r.stderr.strip()[:100]}")
         return False
 
 
-def simulate_carla_join_complete(migrator: LeaderMigrator):
-    """CARLA 합류 완료 시뮬레이션: 5초 후 truck0 openclaw 삭제"""
-    def _delayed():
-        time.sleep(5)
-        print(f"\n[test] CARLA 합류 완료 시뮬레이션 → truck0 openclaw 삭제")
-        migrator.cleanup_old()
-    threading.Thread(target=_delayed, daemon=True).start()
+def test_no_docker():
+    """Docker 없이 replicator 로직만 검증."""
+    print(_c("cyan", "\n[no-docker] 로직 검증 모드"))
+
+    from openclaw_migration.replicator import (
+        LeaderMigrator, SESSION_TAR_TX_PATH, SESSION_TAR_RX_PATH
+    )
+
+    # 더미 데이터 디렉터리 생성
+    old_data = PROJECT_ROOT / ".openclaw-truck0"
+    old_data.mkdir(parents=True, exist_ok=True)
+    (old_data / "SOUL.md").write_text("# Dummy SOUL for truck0\n")
+    (old_data / "session_state.json").write_text('{"tick": 42, "status": "cruising"}\n')
+    print(f"  더미 data 생성: {old_data}")
+
+    new_agent = PROJECT_ROOT / "agents" / "truck1"
+
+    # session tar 생성 테스트 (docker commit 없이 파일만)
+    from openclaw_migration.replicator import create_session_tar, _v2v_transfer
+    print(_c("cyan", "\n[test] session tar 생성..."))
+    create_session_tar(
+        container_name="openclaw-truck0",
+        openclaw_data_dir=old_data,
+        new_truck_id="truck1",
+        new_agent_dir=new_agent,
+    )
+
+    print(_c("cyan", "\n[test] V2V 전송..."))
+    _v2v_transfer(SESSION_TAR_TX_PATH, SESSION_TAR_RX_PATH, "openclaw_session.tar")
+
+    # tar 내용 검증
+    import tarfile
+    print(_c("cyan", "\n[test] tar 내용 검증:"))
+    with tarfile.open(SESSION_TAR_RX_PATH, "r:gz") as tar:
+        for m in tar.getmembers()[:15]:
+            print(f"  {m.name}")
+
+    print(_c("green", "\n✓ 로직 검증 완료 (Docker 없이)"))
+    print(f"  session tar: {SESSION_TAR_RX_PATH}")
 
 
-def main():
-    import argparse
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--reset",        action="store_true", help="완료 후 리셋")
-    parser.add_argument("--skip-truck0",  action="store_true", help="truck0 시작 생략")
-    parser.add_argument("--no-cleanup",   action="store_true", help="truck0 openclaw 삭제 스킵")
-    args = parser.parse_args()
+def run_full_test(auto_reset: bool = False):
+    """Docker가 있는 환경에서 전체 이전 테스트."""
+    from openclaw_migration.monitor import ContainerMonitor
+    from openclaw_migration.replicator import LeaderMigrator, ensure_base_tar
+    from openclaw_migration.reset import reset
 
-    print_banner()
-
-    # ── 1. truck0 openclaw 시작 ──────────────────────────────────────────────
-    if not args.skip_truck0:
-        print("[1] openclaw-truck0 시작 중...")
-        start_truck0_openclaw()
-        time.sleep(2)
+    # ── 1. truck0 openclaw 실행 ──────────────────────────────────────────────
+    print(f"\n{_c('bold','[1] openclaw-truck0 시작 중...')}")
+    if image_exists(OPENCLAW_IMAGE):
+        started = start_truck0_openclaw()
+        if started:
+            time.sleep(2)
     else:
-        print("[1] truck0 시작 스킵")
+        print(f"  {_c('yellow','!')} 이미지 {OPENCLAW_IMAGE} 없음 — 컨테이너 시작 스킵")
 
-    # ── 2. 컨테이너 모니터 시작 ──────────────────────────────────────────────
+    # ── 2. 컨테이너 모니터 ───────────────────────────────────────────────────
     monitor = ContainerMonitor(poll_interval=1.0)
-    print("\n[2] 컨테이너 모니터 시작")
+    print(f"\n{_c('bold','[2] 컨테이너 상태:')}")
     time.sleep(1)
-    print("\n현재 상태:")
     monitor.print_status()
 
-    # ── 3. 선두 교체 대기 ────────────────────────────────────────────────────
-    print(f"\n[3] 3초 후 선두 교체 시뮬레이션 시작...")
-    for i in range(3, 0, -1):
-        print(f"    {i}...", end="\r")
+    # ── 3. 대기 ─────────────────────────────────────────────────────────────
+    print(f"\n{_c('bold','[3] 5초 후 선두 교체 시뮬레이션...')}")
+    for i in range(5, 0, -1):
+        print(f"    {i}...", end="\r", flush=True)
         time.sleep(1)
+    print()
+    print(f"{'─'*62}")
+    print("  선두 교체 트리거: truck0 → truck1")
+    print(f"{'─'*62}\n")
 
-    print(f"\n{'─'*60}")
-    print("  선두 교체 감지: truck0 → truck1")
-    print(f"{'─'*60}\n")
-
-    # ── 4~7. LeaderMigrator 실행 ─────────────────────────────────────────────
+    # ── 4 & 5. 이전 실행 ────────────────────────────────────────────────────
     migrator = LeaderMigrator(
         old_truck_id="truck0",
         new_truck_id="truck1",
@@ -157,41 +210,76 @@ def main():
         discord_token=TRUCK1_DISCORD,
         gateway_token=TRUCK1_GATEWAY,
         openai_api_key=OPENAI_KEY,
-        gateway_port=18790,
     )
     migrator.migrate(blocking=True)
 
-    # ── 8. 합류 완료 시뮬레이션 → truck0 openclaw 삭제 ──────────────────────
-    if not args.no_cleanup:
-        print("\n[8] CARLA 후미 합류 완료 시뮬레이션 → truck0 openclaw 삭제")
-        if migrator._success:
-            simulate_carla_join_complete(migrator)
-            time.sleep(7)
-
-    # ── 결과 확인 ────────────────────────────────────────────────────────────
-    print("\n[결과] 최종 컨테이너 상태:")
+    # ── 6. 결과 확인 ────────────────────────────────────────────────────────
+    print(f"\n{_c('bold','[6] 최종 컨테이너 상태:')}")
+    time.sleep(3)
     monitor.print_status()
 
-    print("\n" + "─"*60)
+    # ── 7. 구 선두 삭제 시뮬레이션 ──────────────────────────────────────────
+    print(f"\n{_c('bold','[7] CARLA 합류 완료 시뮬레이션 → truck0 openclaw 삭제')}")
+    time.sleep(1)
+    migrator.cleanup_old()
+
+    print(f"\n{_c('bold','[최종] 컨테이너 상태:')}")
+    time.sleep(2)
+    monitor.print_status()
+
+    # ── 결과 요약 ────────────────────────────────────────────────────────────
+    print(f"\n{'═'*62}")
     if migrator._success:
         print(_c("green", "  ✓ 테스트 성공!"))
-        print("  - openclaw-truck1 실행 중 (신 선두)")
-        print("  - openclaw-truck0 삭제됨 (구 선두)")
+        print("  - openclaw-truck0 → session tar 캡처 완료")
+        print("  - V2V 전송 완료")
+        print("  - openclaw-truck1 기동 완료")
+        print("  - openclaw-truck0 삭제 완료")
     else:
         print(_c("red", "  ✗ 테스트 실패"))
-    print("─"*60)
+    print("═" * 62)
 
-    # ── 리셋 ─────────────────────────────────────────────────────────────────
-    if args.reset:
-        input("\n  Enter를 누르면 리셋합니다...")
+    # ── 리셋 ────────────────────────────────────────────────────────────────
+    if auto_reset:
+        print()
         reset()
     else:
-        print("\n  리셋: python3 openclaw_migration/test_migration.py --reset")
-        print("  또는: python3 openclaw_migration/reset.py")
+        print(f"\n  리셋: python3 openclaw_migration/test_migration.py --reset")
+        print(f"  모니터: python3 openclaw_migration/monitor.py")
+
+    return migrator._success
+
+
+def main():
+    parser = argparse.ArgumentParser(description="OpenClaw 선두 이전 테스트")
+    parser.add_argument("--reset",     action="store_true", help="테스트 후 또는 단독으로 리셋")
+    parser.add_argument("--no-docker", action="store_true", help="Docker 없이 로직만 테스트")
+    args = parser.parse_args()
+
+    if args.reset and not args.no_docker:
+        from openclaw_migration.reset import reset
+        reset()
+        return
+
+    print_banner()
+
+    if args.no_docker:
+        test_no_docker()
+        return
+
+    if not docker_available():
+        print(_c("yellow", "Docker 데몬 없음 — --no-docker 모드로 전환"))
+        test_no_docker()
+        return
+
+    try:
+        run_full_test(auto_reset=args.reset)
+    except KeyboardInterrupt:
+        print("\n\n중단됨. 리셋: python3 openclaw_migration/test_migration.py --reset")
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\n중단됨. 리셋: python3 openclaw_migration/reset.py")
+        print("\n중단됨.")
