@@ -1,13 +1,13 @@
 # docker-compose.yml — Leader Rotation + DinD 구조
 #
+# 봇 토큰은 1개 — session tar로 truck0 → truck1 이전됨
+#
 # Host
-#   └── vehicle-truck0 (Docker + /var/run/docker.sock 공유)
-#         └── openclaw-truck0  ← 현재 선두 OpenClaw
-#   └── vehicle-truck1 (Docker + /var/run/docker.sock 공유)
-#         └── openclaw-truck1  ← 선두 교체 후 신규 OpenClaw (replicator가 기동)
-#   └── vehicle-truck2 (Docker)
-#         (truck2는 순수 CACC 팔로워 — OpenClaw 없음)
-#   └── bridge-server  — 협상 상태 REST API (18801)
+#   └── vehicle-truck0 (DinD)
+#         └── openclaw-truck0  ← 현재 선두 (토큰 1개로 실행)
+#   └── vehicle-truck1 (DinD)
+#         └── openclaw-truck1  ← 선두 교체 후 session tar로 동일 봇 재기동
+#   └── bridge-server          ← 협상 상태 REST API (18801)
 
 services:
 
@@ -33,8 +33,8 @@ services:
     environment:
       TRUCK_ID: truck0
       OPENCLAW_DATA_DIR: /data/openclaw
-      DISCORD_BOT_TOKEN: ${TRUCK0_DISCORD_BOT_TOKEN}
-      OPENCLAW_GATEWAY_TOKEN: ${TRUCK0_OPENCLAW_GATEWAY_TOKEN}
+      DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
+      OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
       OPENCLAW_GATEWAY_PORT: 18789
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
@@ -48,8 +48,8 @@ services:
     depends_on:
       - bridge-server
 
-  # ── vehicle-truck1 (다음 선두 후보, DinD) ────────────────────────────────────
-  # 평소에는 openclaw 없음. 선두 교체 시 replicator가 openclaw-truck1 기동.
+  # ── vehicle-truck1 (다음 선두, DinD) ────────────────────────────────────────
+  # 평소엔 openclaw 없음. 선두 교체 시 session tar로 openclaw-truck1 자동 기동.
   vehicle-truck1:
     build:
       context: .
@@ -58,8 +58,9 @@ services:
     environment:
       TRUCK_ID: truck1
       OPENCLAW_DATA_DIR: /data/openclaw
-      DISCORD_BOT_TOKEN: ${TRUCK1_DISCORD_BOT_TOKEN}
-      OPENCLAW_GATEWAY_TOKEN: ${TRUCK1_OPENCLAW_GATEWAY_TOKEN}
+      # 토큰은 session tar 안에 포함되어 전달됨 — 여기선 빈값
+      DISCORD_BOT_TOKEN: ""
+      OPENCLAW_GATEWAY_TOKEN: ""
       OPENCLAW_GATEWAY_PORT: 18790
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
@@ -72,34 +73,3 @@ services:
     restart: unless-stopped
     depends_on:
       - bridge-server
-
-  # ── (legacy) openclaw-platoon-a / platoon-b — 기존 두 군집 시나리오용 ──────
-  openclaw-platoon-a:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
-    container_name: openclaw-platoon-a
-    profiles: ["two-platoon"]          # 기본 실행에서 제외
-    environment:
-      HOME: /data/openclaw
-      DISCORD_BOT_TOKEN: ${PLATOON_A_DISCORD_BOT_TOKEN:-}
-      OPENCLAW_GATEWAY_TOKEN: ${PLATOON_A_OPENCLAW_GATEWAY_TOKEN:-}
-    volumes:
-      - ${PLATOON_A_CONFIG_DIR:-./.openclaw-platoon-a}:/data/openclaw
-      - ./bridge:/project/scripts:ro
-      - ./platoon_destinations.json:/project/platoon_destinations.json:ro
-    network_mode: host
-    restart: unless-stopped
-
-  openclaw-platoon-b:
-    image: ${OPENCLAW_IMAGE:-openclaw:local}
-    container_name: openclaw-platoon-b
-    profiles: ["two-platoon"]
-    environment:
-      HOME: /data/openclaw
-      DISCORD_BOT_TOKEN: ${PLATOON_B_DISCORD_BOT_TOKEN:-}
-      OPENCLAW_GATEWAY_TOKEN: ${PLATOON_B_OPENCLAW_GATEWAY_TOKEN:-}
-    volumes:
-      - ${PLATOON_B_CONFIG_DIR:-./.openclaw-platoon-b}:/data/openclaw
-      - ./bridge:/project/scripts:ro
-      - ./platoon_destinations.json:/project/platoon_destinations.json:ro
-    network_mode: host
-    restart: unless-stopped

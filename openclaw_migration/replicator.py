@@ -138,14 +138,23 @@ def create_session_tar(
             agent_dst.mkdir(parents=True)
             print(f"  [agent] {new_agent_dir} 없음 — 스킵")
 
-        # 3) 메타정보 저장
+        # 3) 메타정보 + 토큰 저장 (토큰을 session tar에 포함 → 신 선두에서 그대로 사용)
+        discord_token  = os.environ.get("DISCORD_BOT_TOKEN", "")
+        gateway_token  = os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
+        openai_key     = os.environ.get("OPENAI_API_KEY", "")
         meta = {
             "from_container": container_name,
             "new_truck_id": new_truck_id,
             "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
             "openclaw_image": OPENCLAW_IMAGE,
+            "discord_bot_token": discord_token,
+            "openclaw_gateway_token": gateway_token,
         }
         (tmp / "migration_meta.json").write_text(json.dumps(meta, indent=2))
+        # .env 파일도 포함 — load_and_run_openclaw 에서 읽어서 docker run 에 주입
+        env_content = f"DISCORD_BOT_TOKEN={discord_token}\nOPENCLAW_GATEWAY_TOKEN={gateway_token}\nOPENAI_API_KEY={openai_key}\n"
+        (tmp / ".env").write_text(env_content)
+        print(f"  [token] 토큰 session tar 포함 완료")
 
         # 4) tar.gz 압축
         with tarfile.open(SESSION_TAR_TX_PATH, "w:gz") as tar:
@@ -293,8 +302,8 @@ class LeaderMigrator:
         self.old_data_dir   = old_openclaw_data_dir or (PROJECT_ROOT / f".openclaw-{old_truck_id}")
         self.new_data_dir   = new_openclaw_data_dir or (PROJECT_ROOT / f".openclaw-{new_truck_id}")
 
-        self.discord_token  = discord_token  or os.environ.get("TRUCK1_DISCORD_BOT_TOKEN", "")
-        self.gateway_token  = gateway_token  or os.environ.get("TRUCK1_OPENCLAW_GATEWAY_TOKEN", "")
+        self.discord_token  = discord_token  or os.environ.get("DISCORD_BOT_TOKEN", "")
+        self.gateway_token  = gateway_token  or os.environ.get("OPENCLAW_GATEWAY_TOKEN", "")
         self.openai_api_key = openai_api_key or os.environ.get("OPENAI_API_KEY", "")
         self.gateway_port   = gateway_port
 
