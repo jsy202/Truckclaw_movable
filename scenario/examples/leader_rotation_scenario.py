@@ -319,16 +319,17 @@ class LeaderRotationCoordinator:
             truck1_nav = LeadNavigator(truck1._carla_vehicle, initial_speed=SYNC_SPEED_KMH)
             truck1.attach_controller(truck1_nav)
 
-            # ★ 중요: lead_waypoints 초기화 (truck0의 경로 제거)
-            self.platoon.lead_waypoints.clear()
-            # truck1의 현재 위치부터 새로운 경로 시작
-            truck1_wpt = self.cmap.get_waypoint(truck1.get_location())
-            if truck1_wpt:
-                self.platoon.lead_waypoints.append(truck1_wpt)
+            # truck2도 분리해서 독립 주행 (새로운 platoon 생성)
+            if len(self.platoon.follower_vehicles) > 0:
+                truck2_platoon, _ = self.platoon.split(1, 1)
+                truck2 = truck2_platoon[0]
+                truck2_nav = LeadNavigator(truck2._carla_vehicle, initial_speed=SYNC_SPEED_KMH)
+                truck2.attach_controller(truck2_nav)
+                self._truck2_platoon = truck2_platoon  # 참조 유지
 
             print(f"[rotation] truck0 분리 완료")
             print(f"[rotation] truck1 → LeadNavigator 부여 (독립 주행)")
-            print(f"[rotation] truck2 → truck1 추종 (lead_waypoints 초기화)")
+            print(f"[rotation] truck2 → 독립 platoon으로 분리 (독립 주행)")
             print(f"[rotation] 잔여 군집: {len(self.platoon)}대")
 
             # 바로 LC 시작
