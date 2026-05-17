@@ -403,36 +403,51 @@ class LeaderRotationCoordinator:
         off  = signed_longitudinal_offset(tail, self._v)
         lat  = signed_lateral_offset(tail, self._v)
 
-        # improve _one_lane_step_target 패턴: tail 차선 방향으로 복귀
+        # ego 현재 위치에서 tail 차선으로 점진적 이동
+        ego_wpt = self.cmap.get_waypoint(
+            self._v._carla_vehicle.get_location(),
+            project_to_road=True, lane_type=carla.LaneType.Driving,
+        )
         tail_wpt = self.cmap.get_waypoint(
             tail._carla_vehicle.get_location(),
             project_to_road=True, lane_type=carla.LaneType.Driving,
         )
-        if tail_wpt:
-            target_wpt = _retreat_waypoint(tail_wpt, TARGET_GAP_M) or tail_wpt
-            target_wpt = _advance_waypoint(target_wpt, 5.0) or target_wpt
+
+        if ego_wpt and tail_wpt:
+            # 같은 차선이면 tail 뒤 TARGET_GAP_M 위치 목표
+            if _same_lane(ego_wpt, tail_wpt):
+                # tail 현재 위치에서 전방 5m (tail을 따라가기)
+                target_wpt = _advance_waypoint(tail_wpt, 5.0)
+            else:
+                # 다른 차선이면 ego 전방 20m + tail 차선 y좌표로 유도
+                ego_loc = self._v._carla_vehicle.get_location()
+                target_wpt = self.cmap.get_waypoint(
+                    carla.Location(
+                        x=ego_loc.x + 20.0 * math.cos(math.radians(self._v._carla_vehicle.get_transform().rotation.yaw)),
+                        y=tail_wpt.transform.location.y,
+                        z=tail_wpt.transform.location.z,
+                    ),
+                    project_to_road=True, lane_type=carla.LaneType.Driving,
+                ) or _advance_waypoint(ego_wpt, 20.0)
         else:
             target_wpt = None
 
         if target_wpt:
             tail_spd = tail.speed * 3.6
-            v_cmd = tail_spd + float(np.clip((off + TARGET_GAP_M) * 0.5, -3.0, 6.0))
-            v_cmd = max(MERGE_MIN_SPEED_KMH, v_cmd)
+            # tail보다 약간 빠르게 (따라잡기)
+            v_cmd = tail_spd + 2.0
+            v_cmd = max(MERGE_MIN_SPEED_KMH, min(v_cmd, SYNC_SPEED_KMH + 5.0))
             ctrl = self._pid.run_step(float(v_cmd), target_wpt)
             ctrl.hand_brake = False
             self._v._carla_vehicle.apply_control(ctrl)
 
         self.last_status = f"REJOIN off={off:.1f} lat={lat:.2f}"
 
-        ego_wpt = self.cmap.get_waypoint(
-            self._v._carla_vehicle.get_location(),
-            project_to_road=True, lane_type=carla.LaneType.Driving,
-        )
+        # 완료 조건: 같은 차선 + lateral < 0.9m
         joined = (
             ego_wpt and tail_wpt
             and _same_lane(ego_wpt, tail_wpt)
             and abs(lat) < LANE_STEP_COMPLETE_M
-            and abs(off) < TARGET_GAP_M + 3.0
         )
         if joined or self._ticks > 4000:
             reason = "합류 완료" if joined else "타임아웃"
