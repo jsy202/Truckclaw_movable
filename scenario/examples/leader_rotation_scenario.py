@@ -550,9 +550,27 @@ def main():
 
     cmap = sim.map
     bps  = sim.get_vehicle_blueprints()
-    # ⚠️ 사용자의 스크린샷과 동일한 Volvo FM7 (CarlaCola) 모델로 변경
-    bp   = bps.filter("vehicle.carlamotors.european_hgv")[0]
-    print(f"[main] blueprint: {bp.id}")
+    
+    # ⚠️ 철통 로직: 여러 후보 중 존재하는 첫 번째 트럭 모델 선택
+    truck_candidates = [
+        "vehicle.carlamotors.european_hgv",
+        "vehicle.mercedes-benz.actros",
+        "vehicle.carlamotors.carlacola",
+        "vehicle.carlamotors.firetruck"
+    ]
+    
+    bp = None
+    for cand in truck_candidates:
+        found = bps.filter(cand)
+        if found:
+            bp = found[0]
+            break
+            
+    if not bp:
+        # 최후의 수단: 이름에 'truck'이 들어간 아무 모델이나 선택
+        bp = bps.filter("*truck*")[0]
+        
+    print(f"[main] blueprint selected: {bp.id}")
 
     platoon = build_platoon(sim, bp, PLATOON_SPAWN)
     platoon[0].controller.waypoints_ahead = compute_lead_route(cmap, platoon[0].get_location())
