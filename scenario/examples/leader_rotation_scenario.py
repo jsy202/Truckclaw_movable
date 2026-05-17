@@ -316,7 +316,8 @@ class LeaderRotationCoordinator:
         )
         if ego_wpt:
             target_wpt = _advance_waypoint(ego_wpt, 20.0)
-            ctrl = self._pid.run_step(SYNC_SPEED_KMH * 0.9, target_wpt)
+            # truck0 감속 (군집보다 느리게 → gap 확보)
+            ctrl = self._pid.run_step(SYNC_SPEED_KMH * 0.6, target_wpt)
             ctrl.hand_brake = False
             self._v._carla_vehicle.apply_control(ctrl)
 
@@ -527,7 +528,8 @@ def main():
 
     # CARLA 초기화 (improve 패턴)
     sim  = Core.Simulation(world="Town06", dt=DT, synchronous=True)
-    sim.world.set_weather(carla.WeatherParameters.ClearNoon)
+    # 어두운 석양 날씨
+    sim.world.set_weather(carla.WeatherParameters.CloudySunset)
 
     cmap = sim.map
     bps  = sim.get_vehicle_blueprints()
