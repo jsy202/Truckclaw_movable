@@ -1,12 +1,12 @@
 {
   "speeds": {
-    "sync_speed_kmh": 18.0,
-    "post_merge_speed_kmh": 40.0,
-    "approach_fast_kmh": 38.0,
-    "open_gap_delta_kmh": 6.0,
-    "lane_change_boost_kmh": 10.0,
-    "catchup_kmh": 18.0,
-    "merge_min_speed_kmh": 15.0
+    "sync_speed_kmh": 10.0,
+    "post_merge_speed_kmh": 15.0,
+    "approach_fast_kmh": 12.0,
+    "open_gap_delta_kmh": 3.0,
+    "lane_change_boost_kmh": 5.0,
+    "catchup_kmh": 10.0,
+    "merge_min_speed_kmh": 8.0
   },
   "gaps": {
     "target_gap_m": 13.0,
