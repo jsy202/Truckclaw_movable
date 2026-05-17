@@ -208,7 +208,28 @@ def load_and_run_openclaw(
     new_openclaw_data_dir.mkdir(parents=True, exist_ok=True)
     if SESSION_TAR_RX_PATH.exists():
         with tarfile.open(SESSION_TAR_RX_PATH, "r:gz") as tar:
-            # openclaw_data/ → data dir
+            # ① 루트 .env 추출 → 토큰 읽기
+            env_member = next(
+                (m for m in tar.getmembers() if m.name in ("./.env", ".env")), None
+            )
+            if env_member:
+                f = tar.extractfile(env_member)
+                if f:
+                    for line in f.read().decode().splitlines():
+                        line = line.strip()
+                        if not line or line.startswith("#") or "=" not in line:
+                            continue
+                        k, _, v = line.partition("=")
+                        k, v = k.strip(), v.strip()
+                        if k == "DISCORD_BOT_TOKEN" and v:
+                            discord_token = v
+                        elif k == "OPENCLAW_GATEWAY_TOKEN" and v:
+                            gateway_token = v
+                        elif k == "OPENAI_API_KEY" and v:
+                            openai_api_key = v
+                    print(f"  [token] session tar .env에서 토큰 로드 완료 (len={len(discord_token)})")
+
+            # ② openclaw_data/ → data dir
             members = [m for m in tar.getmembers() if m.name.startswith("./openclaw_data")]
             for m in members:
                 m.name = m.name.replace("./openclaw_data", ".", 1)
@@ -216,15 +237,14 @@ def load_and_run_openclaw(
                 tar.extractall(str(new_openclaw_data_dir), members=members)
                 print(f"  [data ] session 복원 → {new_openclaw_data_dir}")
 
-            # agent_config/ → data dir 위에 덮어쓰기
-            tar2 = tarfile.open(SESSION_TAR_RX_PATH, "r:gz")
+        # ③ agent_config/ → data dir 위에 덮어쓰기 (별도 open — members 재사용 불가)
+        with tarfile.open(SESSION_TAR_RX_PATH, "r:gz") as tar2:
             members2 = [m for m in tar2.getmembers() if m.name.startswith("./agent_config")]
             for m in members2:
                 m.name = m.name.replace("./agent_config", ".", 1)
             if members2:
                 tar2.extractall(str(new_openclaw_data_dir), members=members2)
                 print(f"  [agent] agent_config 복원 → {new_openclaw_data_dir}")
-            tar2.close()
     else:
         print(_c("yellow", f"  session tar 없음 ({SESSION_TAR_RX_PATH}) — data dir만 사용"))
 

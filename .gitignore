@@ -26,3 +26,9 @@ venv/
 .vscode/
 .idea/
 *.swp
+
+# Leader Rotation 런타임
+.openclaw-truck0/
+.openclaw-truck1/
+.openclaw-truck2/
+.transfer/

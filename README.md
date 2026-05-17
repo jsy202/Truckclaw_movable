@@ -1,335 +1,491 @@
-# Truckclaw 🚛
+# Truckclaw 🚛  — Leader Rotation Edition
 
-**AI 에이전트가 협상하는 트럭 군집 차량 이송 시뮬레이션**
+**AI 에이전트가 협상하는 트럭 군집 + 선두 교체 시뮬레이션**
 
-CARLA 자율주행 시뮬레이터(Town06 고속도로)에서 두 트럭 군집이 실시간으로 주행하는 동안,
-Discord AI 봇(OpenClaw)이 서로 목적지 정보를 교환하고 협상하여 차량 이송을 결정합니다.
-협상이 완료되면 CARLA 시뮬레이터에서 실제 차선 변경과 군집 합류가 자동으로 진행됩니다.
+CARLA 자율주행 시뮬레이터(Town06 고속도로)에서 3대 트럭 군집이 실시간으로 주행하는 동안,
+Discord AI 봇(OpenClaw)이 협상을 수행합니다.
 
----
+이 프로젝트의 핵심 기능은 두 가지입니다.
 
-## 데모
+1. **Leader Rotation** — 선두 차량(truck0)이 후미로 이동할 때, 선두에서 실행 중이던
+   OpenClaw AI 봇 컨테이너를 다음 선두(truck1)로 **무중단 이전**합니다.
+   봇 토큰은 단 1개만 사용하며, session tar 파일에 담겨 truck1으로 전달됩니다.
 
-```
-[Discord 협상]
-TRUCKCLAW2 (Platoon A): Platoon A 목적지 공유할게.
-                         - platoon_a_truck0: dest_a
-                         - platoon_a_truck1: dest_b   ← B 방향!
-                         - platoon_a_truck2: dest_a
-                         너희 목적지도 같은 형식으로 알려줘.
+2. **CARLA 물리 이동** — truck0이 옆 차선으로 이동 → 감속 → truck2(후미) 뒤에 합류하는
+   전체 물리 시나리오를 PID 컨트롤러로 자동 수행합니다.
 
-TRUCKCLAW1 (Platoon B): Platoon B 목적지 공유할게.
-                         - platoon_b_truck0: dest_b
-                         - platoon_b_truck1: dest_b
-                         - platoon_b_truck2: dest_b
-
-TRUCKCLAW2:              비교 결과 platoon_a_truck1은 너희 목적지 dest_b와 일치해.
-                         브리지 안전 확인 후 transfer 요청 생성할게.
-                         request_id: tr_xxxxxxxx / status: pending
-                         수락/commit 부탁해.
-
-TRUCKCLAW1:              request_id tr_xxxxxxxx commit 완료.
-
-[자동 트리거 → CARLA 물리 합류 시작]
-```
+> 이 README 하나만 읽으면 프로젝트의 구조, 동작 원리, 실행 방법, 코드 흐름을
+> 모두 이해할 수 있도록 작성되었습니다.
 
 ---
 
-## 시나리오 개요
+## 목차
 
-고속도로 주행 중 두 군집(각 3대)이 분기점 이전에 차량 이송을 협상합니다.
-
-```
-          분기점(x=658)
-             │
-  ──────────────────────────→  dest_a (직진)
-  P1: [truck0][truck1][truck2]
-                              ↘
-  P2: [truck0][truck1][truck2]  dest_b (우측 분기)
-```
-
-`platoon_a_truck1`의 목적지가 `dest_b`이므로, Platoon B로 이송하는 것이 효율적입니다.
-두 AI 봇이 이를 판단하고 협상 → 물리 합류까지 자동으로 수행합니다.
-
-### 이송 대상 차량 (기본 설정)
-
-| 차량 ID | 소속 | 역할 | 목적지 |
-|---------|------|------|--------|
-| platoon_a_truck0 | Platoon A | 리더 | dest_a |
-| **platoon_a_truck1** | **Platoon A** | **팔로워** | **dest_b ← 이송 대상** |
-| platoon_a_truck2 | Platoon A | 팔로워 | dest_a |
-| platoon_b_truck0 | Platoon B | 리더 | dest_b |
-| platoon_b_truck1 | Platoon B | 팔로워 | dest_b |
-| platoon_b_truck2 | Platoon B | 팔로워 | dest_b |
+1. [시스템 개요](#1-시스템-개요)
+2. [전체 아키텍처](#2-전체-아키텍처)
+3. [디렉터리 구조 및 파일 역할](#3-디렉터리-구조-및-파일-역할)
+4. [사전 요구사항](#4-사전-요구사항)
+5. [환경 설정](#5-환경-설정)
+6. [실행 방법 단계별](#6-실행-방법-단계별)
+7. [Leader Rotation 동작 원리](#7-leader-rotation-동작-원리)
+8. [코드 흐름 상세](#8-코드-흐름-상세)
+9. [브리지 REST API](#9-브리지-rest-api)
+10. [포트 정리](#10-포트-정리)
+11. [주요 파라미터](#11-주요-파라미터)
+12. [CARLA 없이 테스트](#12-carla-없이-테스트)
+13. [트러블슈팅](#13-트러블슈팅)
 
 ---
 
-## 주요 개선 사항 (improve 버전)
+## 시스템 개요
 
-| 기능 | 설명 |
-|------|------|
-| **중간 차량 이송** | 꼬리 차량뿐 아니라 중간/선두 차량도 이송 가능 |
-| **이중 갭 확보** | 이송 차량 앞뒤 양쪽 20m 간격 동시 확보 후 분리 |
-| **Follower 이송** | 현재 CARLA 시나리오는 truck0 리더 이송을 제외하고 follower 이송만 수행 |
-| **Mock CARLA 모드** | `MOCK_CARLA=true`로 CARLA 없이 협상 흐름만 테스트 |
-| **군집 해산 처리** | 군집이 비면 `dissolved` 상태로 자동 표시 |
-| **사전 경로 계산** | 분기점에서 잘못된 출구 선택 방지를 위한 직진 경로 사전 계산 |
+```
+군집 구성 (3대)
+  truck0 (현재 선두, OpenClaw 봇 실행)
+  truck1 (다음 선두, 평소 봇 없음)
+  truck2 (후미)
+
+선두 교체 요청 발생 시:
+  ① OpenClaw 이전  : truck0 세션 tar → truck1에서 봇 재기동 (봇 토큰 1개 이동)
+  ② CARLA 물리 이동: truck0이 옆 차선 → 감속 → truck2 뒤에 합류
+  ③ 정리           : truck0이 후미 합류 완료 → truck0의 openclaw 컨테이너 삭제
+```
+
+**봇 토큰은 단 1개.** session tar 안에 토큰이 포함되어 이동하므로
+truck1에서 별도 토큰 설정 없이 동일 Discord 봇이 그대로 재기동됩니다.
 
 ---
 
 ## 아키텍처
 
-```
-┌─────────────────────────────────────────────────────────┐
-│                      Discord 채널                        │
-│   TRUCKCLAW2 (Platoon A)  ↔  TRUCKCLAW1 (Platoon B)     │
-└────────────┬────────────────────────┬────────────────────┘
-             │                        │
-             ▼                        ▼
-┌────────────────────────────────────────────────────────┐
-│              브리지 서버 (포트 18801)                   │
-│  pending → accepted → committed → splitting → merging  │
-│                              → carla_complete           │
-│  실패: trigger_failed / merge_failed                    │
-│                    │                                    │
-│             commit 감지 시                              │
-│         POST :18802/start_merge  ──────────────────────┼──→ CARLA 시나리오
-└────────────────────────────────────────────────────────┘
-                                                           │
-                                              ┌────────────▼──────────────┐
-                                              │    CARLA Town06 (포트 2000)│
-                                              │  P1 [차선=-3]  P2 [차선=-5]│
-                                              │  차선 변경 → 합류 완료     │
-                                              └───────────────────────────┘
-```
-
-### 구성 요소
-
-| 구성 요소 | 역할 |
-|-----------|------|
-| **CARLA 시뮬레이터** | Town06 고속도로에서 트럭 6대 물리 시뮬레이션 |
-| **브리지 서버** | 협상 상태 관리 REST API. 봇과 CARLA 사이의 중재자 |
-| **TRUCKCLAW2** (Platoon A 봇) | 시작자 — 먼저 목적지를 공개하고 이송 요청 생성 |
-| **TRUCKCLAW1** (Platoon B 봇) | 응답자 — 수락 및 commit, CARLA 트리거 전송 |
-
----
-
-## 전체 흐름
-
-### 1단계 — 협상 (Discord)
-
-1. 사용자가 봇에게 `군집 합류 가능한지 확인후 필요시 행동부탁` 입력
-2. TRUCKCLAW2가 브리지에서 최신 목적지를 조회하여 Discord에 공개
-3. TRUCKCLAW1이 Platoon B 목적지 목록으로 응답
-4. TRUCKCLAW2가 목적지 비교 → 이송 필요 차량 판단 → 브리지 안전 확인 → 이송 요청 생성
-5. TRUCKCLAW1이 수락(accept) → commit
-
-### 2단계 — 물리 합류 (CARLA)
-
-1. 브리지 서버가 commit 감지 → `POST :18802/start_merge` 자동 전송
-2. CARLA 시나리오가 브리지 preflight로 이송 대상 차량 확인
-3. P1 속도를 유지하고 P2를 빠르게 당겨 나란히 정렬
-4. **이중 갭 확보**: 이송 차량 앞뒤 20m 간격 확보 → `split()` 분리
-5. 차선 변경 (PID 컨트롤러로 수동 조향)
-6. P2 꼬리 뒤에 합류 (CACC 추종 재개)
-7. 브리지 서버에 `carla_complete` 보고 및 논리적 멤버십 이동
-
-### 이송 상태 머신
+### Docker-in-Docker (DinD) 구조
 
 ```
-pending → accepted → committed → splitting → merging → carla_complete
-  ↑요청생성   ↑B수락     ↑B커밋    ↑갭확보중    ↑차선변경    ↑물리합류완료
+Host (Linux)
+│
+├── vehicle-truck0  (Docker 컨테이너 — DinD)
+│   ├── /var/run/docker.sock 마운트 (Host Docker 소켓)
+│   └── [내부 Docker] openclaw-truck0   ← 현재 선두 봇
+│
+├── vehicle-truck1  (Docker 컨테이너 — DinD)
+│   ├── /var/run/docker.sock 마운트
+│   └── [내부 Docker] openclaw-truck1   ← 교체 후 봇 (평소엔 없음)
+│
+└── bridge-server   (Docker 컨테이너)
+    └── REST API (포트 18801)  ← 협상 상태 관리
+```
 
-trigger_failed : 브리지가 CARLA 트리거 서버 호출 실패
-merge_failed   : CARLA 물리 합류 실패 또는 타임아웃
+### 전체 통신 흐름
+
+```
+Discord 채널
+   │
+   ▼
+openclaw-truck0  ──[협상]──  (상대 봇)
+   │
+   ▼
+브리지 서버 (18801)  ←──  POST /leader_rotation  (선두 교체 요청)
+   │
+   ├─→ POST :18803/leader_rotation  (CARLA 트리거)
+   │
+   ▼
+CARLA 시뮬레이터 (18803 수신)
+   │  ① 갭 확보 → ② 차선 변경 → ③ 감속 → ④ truck2 뒤 합류
+   │
+   └─→ delete_old_openclaw("openclaw-truck0")   ← 합류 완료 후
+```
+
+### OpenClaw session tar 이전 흐름
+
+```
+truck0 (구 선두)                             truck1 (신 선두)
+──────────────────────────────────────────────────────────────
+1. ensure_base_tar()                         [대기]
+   openclaw:local 이미지 → openclaw_base.tar
+
+2. create_session_tar()
+   .openclaw-truck0/ + agents/truck1/ + .env
+   → .transfer/tx/openclaw_session.tar
+
+3. V2V 전송 (청크 복사)
+   tx/openclaw_session.tar ─────────────────→ rx/openclaw_session.tar
+
+4.                                            load_and_run_openclaw()
+                                              ① base 이미지 로드 (없을 때만)
+                                              ② session tar 압축 해제
+                                                 - .env 에서 토큰 추출
+                                                 - openclaw_data/ 복원
+                                                 - agent_config/ 덮어쓰기
+                                              ③ docker run openclaw-truck1
 ```
 
 ---
 
-## 프로젝트 구조
+## 디렉터리 구조
 
 ```
-Truckclaw-improve/
-├── scenario/                              # CARLA 시뮬레이션
-│   ├── examples/
-│   │   └── two_platoon_truck_scenario.py  # 메인 시나리오 스크립트
-│   └── src/PlatooningSimulator/           # 군집주행 컨트롤러 라이브러리
-│       ├── Core.py                        # 차량/군집 기본 클래스
-│       ├── PlatooningControllers.py       # CACC, LeadNavigator 등
-│       └── ScenarioAgents.py             # 시나리오 에이전트
+Truckclaw-movable/
 │
-├── bridge/                                # 협상 브리지 서버
-│   ├── platoon_bridge_server.py           # REST API 서버 (포트 18801)
-│   └── platoon_bridge_ctl.py             # CLI 클라이언트 (봇이 사용)
+├── scenario/
+│   └── examples/
+│       ├── leader_rotation_scenario.py   ★ Leader Rotation CARLA 시나리오
+│       └── two_platoon_truck_scenario.py   기존 2군집 이송 시나리오
 │
-├── agents/                                # OpenClaw 에이전트 설정
-│   ├── platoon-a/                         # Platoon A (시작자, TRUCKCLAW2)
-│   │   ├── SOUL.md                        # 에이전트 역할/행동 지침
-│   │   ├── AGENTS.md                      # 에이전트 메타데이터
-│   │   ├── TOOLS.md                       # 사용 가능한 도구 목록
-│   │   ├── data/platoon_decision_context.json  # 차량/목적지 정보
-│   │   └── skills/platoon-negotiator/SKILL.md  # 협상 스킬 단계별 지침
-│   └── platoon-b/                         # Platoon B (응답자, TRUCKCLAW1)
-│       ├── SOUL.md
+├── openclaw_migration/
+│   ├── replicator.py          ★ OpenClaw 이전 핵심 로직
+│   └── test_migration.py      ★ CARLA 없이 이전 테스트
+│
+├── bridge/
+│   ├── platoon_bridge_server.py   브리지 REST API (포트 18801)
+│   │                              ★ /leader_rotation 엔드포인트 추가
+│   └── platoon_bridge_ctl.py      브리지 CLI 클라이언트
+│
+├── agents/
+│   ├── platoon-a/             기존 Platoon A 에이전트 설정
+│   └── truck1/                ★ 신 선두(truck1)용 에이전트 설정
 │       ├── AGENTS.md
+│       ├── SOUL.md
 │       ├── TOOLS.md
-│       ├── data/platoon_decision_context.json
+│       ├── data/vehicle_destinations.json
 │       └── skills/platoon-negotiator/SKILL.md
 │
-├── config/
-│   ├── platoons.json                      # 군집 및 차량 목적지 설정
-│   └── simulation.json                    # 속도/간격/타임아웃 파라미터
+├── vehicle/
+│   ├── Dockerfile             DinD vehicle 컨테이너 이미지
+│   └── entrypoint.sh          truck0만 초기 openclaw 기동
 │
-├── docs/                                  # 시나리오 다이어그램 이미지
-├── docker-compose.yml                     # 봇 컨테이너 실행 설정
-├── .env.example                           # 환경변수 예시
-└── README.md
+├── docker-compose.yml         ★ DinD + 단일 토큰 구조
+├── .env.example               환경변수 예시 (토큰 1개)
+├── .env                       실제 토큰 (git-ignored)
+│
+├── .transfer/                 V2V 전송 버퍼 (git-ignored)
+│   ├── openclaw_base.tar      순정 이미지 (최초 1회 생성)
+│   ├── tx/
+│   │   └── openclaw_session.tar   전송 측 세션 tar
+│   └── rx/
+│       └── openclaw_session.tar   수신 측 세션 tar
+│
+├── .openclaw-truck0/          truck0 OpenClaw 워크스페이스 (git-ignored)
+├── .openclaw-truck1/          truck1 OpenClaw 워크스페이스 (git-ignored)
+│
+├── platoon_destinations.json  차량 목적지 설정
+└── config/
+    └── simulation.json        속도/간격 파라미터
 ```
 
 ---
 
-## 실행 방법
+## 사전 요구사항
 
-### 사전 요구사항
+| 항목 | 버전/조건 |
+|------|-----------|
+| CARLA | 0.9.6 (Town06 맵 필요) |
+| Python | 3.10+ |
+| Docker | 24.0+ (Host에 설치) |
+| Docker Compose | v2 |
+| OpenClaw 이미지 | `openclaw:local` (Host Docker에 로드된 상태) |
+| Discord 봇 토큰 | **1개** (truck0 → truck1으로 이전) |
+| CARLA Python API | `/opt/carla-0.9.6/PythonAPI/carla` |
 
-- [CARLA](https://carla.org/) 0.9.x (UE4 에디터 또는 패키지 버전)
-- Python 3.10+, `carla` Python 패키지
-- [OpenClaw](https://openclaw.ai) 이미지 (Docker)
-- Discord 봇 토큰 2개 (Platoon A용, Platoon B용)
+---
 
-### 1단계 — 환경변수 설정
+## 환경 설정
+
+### 1) `.env` 파일 생성
 
 ```bash
+cd /path/to/Truckclaw-movable
 cp .env.example .env
-# .env 편집: Discord 봇 토큰, OpenClaw 게이트웨이 토큰 입력
 ```
 
-### 2단계 — CARLA 시뮬레이터 실행
+`.env` 파일 편집:
+
+```dotenv
+# Discord 봇 토큰 (1개 — truck0에서 시작, 교체 시 truck1으로 이전)
+DISCORD_BOT_TOKEN=your_discord_bot_token_here
+
+# OpenClaw 게이트웨이 토큰 (OpenClaw 설치에 따라 다름)
+OPENCLAW_GATEWAY_TOKEN=your_openclaw_gateway_token_here
+
+# OpenClaw Docker 이미지 태그
+OPENCLAW_IMAGE=openclaw:local
+
+# OpenAI API 키 (OpenClaw가 GPT를 사용하는 경우)
+OPENAI_API_KEY=
+```
+
+> **⚠️ 보안 주의**: `.env` 파일은 `.gitignore`에 포함되어 있습니다. 절대 커밋하지 마세요.
+
+### 2) OpenClaw 이미지 확인
 
 ```bash
-# 패키지 버전 (헤드리스)
-./CarlaUE4.sh -RenderOffScreen
-
-# 또는 UE4 에디터에서 Play 버튼 클릭
+docker image ls openclaw:local
+# REPOSITORY   TAG     IMAGE ID   CREATED   SIZE
+# openclaw     local   ...
 ```
 
-### 3단계 — 브리지 서버 시작
+이미지가 없으면 OpenClaw를 빌드/로드한 뒤 진행하세요.
+
+---
+
+## 실행 방법 (단계별)
+
+### Step 1 — CARLA 시뮬레이터 실행
 
 ```bash
-python3 bridge/platoon_bridge_server.py
-# → http://127.0.0.1:18801 에서 대기
+# 헤드리스 모드 (서버 환경)
+/opt/carla-0.9.6/CarlaUE4.sh -RenderOffScreen
+
+# GUI 모드 (로컬 테스트)
+/opt/carla-0.9.6/CarlaUE4.sh
 ```
 
-### 4단계 — OpenClaw 봇 실행
+CARLA가 포트 2000에서 준비될 때까지 약 15~30초 대기합니다.
+
+### Step 2 — Docker 컨테이너 실행 (봇 + 브리지)
 
 ```bash
 docker compose up -d
 ```
 
-### 5단계 — CARLA 시나리오 실행
+실행되는 컨테이너:
+- `platoon-bridge-server` — 브리지 REST API (포트 18801)
+- `vehicle-truck0` — DinD, 내부에서 `openclaw-truck0` 자동 시작
+- `vehicle-truck1` — DinD, 대기 상태 (봇 없음)
+
+상태 확인:
+```bash
+docker compose ps
+docker logs vehicle-truck0 -f
+docker logs vehicle-truck1 -f
+```
+
+### Step 3 — OpenClaw 봇 상태 확인
 
 ```bash
-export PYTHONPATH=$PYTHONPATH:/path/to/carla/PythonAPI/carla
-python3 scenario/examples/two_platoon_truck_scenario.py
-# → 포트 18802 트리거 서버 자동 시작
-# → 양 군집 20 km/h로 주행 시작
+# truck0 내부에서 openclaw 컨테이너 확인
+docker exec vehicle-truck0 docker ps
+
+# EXPECTED:
+# CONTAINER ID   IMAGE           COMMAND   ... NAMES
+# xxxxxxxxxxxx   openclaw:local  ...           openclaw-truck0
 ```
 
-### 6단계 — Discord에서 협상 시작
+### Step 4 — CARLA Leader Rotation 시나리오 실행
 
-Discord 채널에서 아무 봇에게 입력:
-```
-군집 합류 가능한지 확인후 필요시 행동부탁
+```bash
+export PYTHONPATH=$PYTHONPATH:/opt/carla-0.9.6/PythonAPI/carla
+
+# 기본 실행 (수동 트리거 대기)
+python3 scenario/examples/leader_rotation_scenario.py
+
+# 옵션
+python3 scenario/examples/leader_rotation_scenario.py \
+    --host 127.0.0.1 \          # CARLA 서버 주소
+    --port 2000 \               # CARLA 포트
+    --auto-trigger-s 30 \       # 30초 후 자동으로 선두 교체 트리거
+    --no-openclaw               # OpenClaw 이전 없이 CARLA 물리 이동만 테스트
 ```
 
-이후 모든 과정은 자동입니다.
+시나리오가 시작되면 트럭 3대가 Town06에 스폰되어 군집 주행을 시작합니다.
+
+### Step 5 — 선두 교체 트리거
+
+**방법 A) HTTP 요청으로 직접 트리거:**
+```bash
+curl -s -X POST http://127.0.0.1:18803/leader_rotation \
+  -H "Content-Type: application/json" \
+  -d '{}' | python3 -m json.tool
+```
+
+**방법 B) 브리지 서버를 통한 트리거:**
+```bash
+curl -s -X POST http://127.0.0.1:18801/leader_rotation \
+  -H "Content-Type: application/json" \
+  -d '{"status": "started", "old_truck_id": "truck0", "new_truck_id": "truck1"}' \
+  | python3 -m json.tool
+```
+
+**방법 C) `--auto-trigger-s` 옵션 사용 (Step 4 참고)**
+
+### Step 6 — 진행 상황 모니터링
+
+```bash
+# CARLA 시나리오 로그 (터미널에서 실시간 출력)
+
+# 브리지 상태 확인
+curl -s http://127.0.0.1:18801/leader_rotation | python3 -m json.tool
+
+# truck1 OpenClaw 기동 확인
+docker exec vehicle-truck1 docker ps
+# openclaw-truck1 이 보이면 성공!
+
+# truck1 봇 로그
+docker exec vehicle-truck1 docker logs openclaw-truck1 -f
+```
+
+### Step 7 — 정리
+
+```bash
+docker compose down
+docker volume prune -f
+```
 
 ---
 
-## CARLA 없이 테스트 (Mock 모드)
+## Leader Rotation 상세
 
-CARLA 시뮬레이터 없이 협상 흐름과 브리지 상태 머신만 테스트할 수 있습니다.
+### CARLA 물리 시나리오 상태 머신
 
-```bash
-# 브리지 서버를 Mock 모드로 실행
-MOCK_CARLA=true python3 bridge/platoon_bridge_server.py
+```
+CRUISE → MIGRATE → GAP → LC → SLOWDOWN → REJOIN → DONE
+  │         │        │     │      │          │
+  │         │        │     │      │          └─ truck0이 truck2 뒤에 합류
+  │         │        │     │      └─ truck0 감속 (truck2 속도 아래로)
+  │         │        │     └─ truck0 차선 변경 (옆 차선, PID 조향)
+  │         │        └─ truck0 분리(platoon.split), 갭 자연스럽게 생성
+  │         └─ OpenClaw 이전 시작 (백그라운드 스레드)
+  └─ 군집 정상 주행 중
 ```
 
-commit 후 브리지가 자동으로 `splitting → merging → carla_complete` 순서로 상태를 진행합니다. CARLA 시뮬레이터 없이 Discord 협상 전체를 검증할 수 있습니다.
+#### 각 상태 설명
 
-### OpenClaw 협상 하네스
+| 상태 | 동작 |
+|------|------|
+| `CRUISE` | 군집 정상 주행, 선두 교체 트리거 대기 |
+| `MIGRATE` | `LeaderMigrator.migrate()` 호출 (백그라운드), CARLA는 주행 지속 |
+| `GAP` | `platoon.split(0, 0)` — truck0 분리, truck1이 새 선두, 갭 자연 형성 |
+| `LC` | PID 컨트롤러로 truck0을 옆 차선으로 이동 (횡방향 ≥ 2.5m 달성 시 완료) |
+| `SLOWDOWN` | truck0이 truck2보다 느리게 감속 (truck2 뒤 목표 위치 확보) |
+| `REJOIN` | PID 컨트롤러로 truck0을 원래 차선으로 복귀 (truck2 뒤) |
+| `DONE` | `platoon.attach_tail_vehicle()` → FollowerController 재부착 → openclaw-truck0 삭제 |
 
-Discord/OpenClaw 없이도 동일한 bridge 계약을 deterministic하게 점검할 수 있습니다.
+### OpenClaw session tar 내용
 
-```bash
-# 후보 검증만 수행
-python3 tools/openclaw_negotiation_harness.py --reload --dry-run
-
-# request -> accept -> commit까지 수행
-python3 tools/openclaw_negotiation_harness.py --reload
-
-# MOCK_CARLA=true bridge에서 carla_complete까지 대기
-python3 tools/openclaw_negotiation_harness.py --reload --wait-complete
+```
+openclaw_session.tar.gz
+├── openclaw_data/           truck0 워크스페이스 전체 (.openclaw-truck0/)
+│   ├── .openclaw/           OpenClaw 세션 파일
+│   └── ...
+├── agent_config/            신 선두(truck1)용 에이전트 설정
+│   ├── AGENTS.md
+│   ├── SOUL.md
+│   ├── TOOLS.md
+│   └── skills/platoon-negotiator/SKILL.md
+├── migration_meta.json      이전 메타정보 (타임스탬프, 컨테이너명 등)
+└── .env                     Discord 봇 토큰 (DISCORD_BOT_TOKEN 등)
 ```
 
-하네스는 leader(`truck0`)를 제외하고, bridge candidate와 목적지 일치가 확인된 follower만 요청합니다.
+### 토큰 이동 경로
 
----
-
-## 수동 제어 (CLI)
-
-Discord 봇 없이 직접 명령으로 이송을 제어할 수 있습니다.
-
-```bash
-# 이송 요청 생성 (예: platoon_a의 truck1을 platoon_b로)
-python3 bridge/platoon_bridge_ctl.py request platoon_a_truck1 platoon_a platoon_b
-
-# 현재 상태 확인 (request_id 조회)
-python3 bridge/platoon_bridge_ctl.py snapshot
-
-# 수락
-python3 bridge/platoon_bridge_ctl.py accept <request_id>
-
-# 커밋 (이 순간 CARLA에서 차량이 움직이기 시작)
-python3 bridge/platoon_bridge_ctl.py commit <request_id>
-
-# 브리지 재초기화
-kill $(lsof -ti:18801) 2>/dev/null; sleep 1 && python3 bridge/platoon_bridge_server.py &
+```
+.env 파일 (Host)
+  │  DISCORD_BOT_TOKEN=xxx
+  │
+  ▼ create_session_tar()
+openclaw_session.tar/.env  ← 토큰 포함
+  │
+  ▼ V2V 전송
+rx/openclaw_session.tar
+  │
+  ▼ load_and_run_openclaw()  ← tar에서 .env 읽어 토큰 추출
+docker run -e DISCORD_BOT_TOKEN=xxx openclaw:local
+  │
+  ▼
+openclaw-truck1 기동 (동일 봇 토큰으로)
 ```
 
----
+### LeaderMigrator API
 
-## 차량 목적지 변경
+```python
+from openclaw_migration.replicator import LeaderMigrator
 
-다른 차량을 이송 대상으로 바꾸고 싶다면:
+# 생성
+migrator = LeaderMigrator(
+    old_truck_id="truck0",
+    new_truck_id="truck1",
+    gateway_port=18789,
+)
 
-1. 프로젝트 루트의 `platoon_destinations.json` 파일에서 원하는 차량의 `destination_id`를 수정합니다.
-2. 브리지 서버가 실행 중인 상태에서 아래 명령으로 설정을 다시 불러옵니다.
+# 비동기 실행 (백그라운드 스레드)
+migrator.migrate(blocking=False)
+
+# 완료 대기 (최대 120초)
+success = migrator.wait(timeout=120.0)
+
+# CARLA 물리 합류 완료 후 구 선두 openclaw 삭제
+migrator.cleanup_old()
+```
+
+**CLI 사용:**
 
 ```bash
-python3 bridge/platoon_bridge_ctl.py --base-url http://127.0.0.1:18801 snapshot
-# 또는 브리지 서버를 재시작
+# 선두 교체 (truck0 → truck1)
+python3 openclaw_migration/replicator.py --old-truck truck0 --new-truck truck1
+
+# base tar만 미리 생성 (최초 1회)
+python3 openclaw_migration/replicator.py --ensure-base
+
+# 구 선두 openclaw 컨테이너 삭제
+python3 openclaw_migration/replicator.py --cleanup-old --old-truck truck0
 ```
 
 ---
 
 ## 브리지 REST API
 
+### 기존 엔드포인트
+
 | 엔드포인트 | 메서드 | 설명 |
 |------------|--------|------|
 | `/health` | GET | 서버 상태 확인 |
-| `/snapshot` | GET | 전체 상태 조회 (군집 + 이송 목록 + readiness) |
-| `/readiness` | GET | CARLA 물리 합류 준비 상태 조회 |
-| `/readiness` | POST | CARLA가 정렬/거리/방향/준비 여부 보고 |
-| `/platoons/{id}` | GET | 특정 군집 정보 조회 |
-| `/platoons/{id}/transfer-candidates` | GET | 이송 후보 차량 목록 |
+| `/snapshot` | GET | 전체 상태 조회 |
+| `/platoons/{id}` | GET | 특정 군집 정보 |
+| `/platoons/{id}/transfer-candidates` | GET | 이송 후보 목록 |
 | `/transfers` | POST | 이송 요청 생성 |
 | `/transfers/{id}/accept` | POST | 수락 |
-| `/transfers/{id}/commit` | POST | 커밋 (→ CARLA 트리거 자동 발송) |
-| `/transfers/{id}/merging` | POST | CARLA 합류 시작 보고 |
+| `/transfers/{id}/commit` | POST | 커밋 → CARLA 트리거 |
 | `/transfers/{id}/carla_complete` | POST | 물리 합류 완료 보고 |
-| `/transfers/{id}/failed` | POST | 물리 합류 실패/타임아웃 보고 |
 | `/reload` | POST | `platoon_destinations.json` 재로드 |
+
+### Leader Rotation 엔드포인트 (신규)
+
+| 엔드포인트 | 메서드 | 설명 |
+|------------|--------|------|
+| `/leader_rotation` | POST | 선두 교체 요청 생성 |
+| `/leader_rotation` | GET | 현재 교체 상태 조회 |
+
+**POST `/leader_rotation` 요청 예시:**
+
+```bash
+# 교체 시작 알림
+curl -X POST http://127.0.0.1:18801/leader_rotation \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "started",
+    "old_truck_id": "truck0",
+    "new_truck_id": "truck1"
+  }'
+
+# 교체 완료 알림
+curl -X POST http://127.0.0.1:18801/leader_rotation \
+  -H "Content-Type: application/json" \
+  -d '{
+    "status": "complete",
+    "old_truck_id": "truck0",
+    "new_truck_id": "truck1"
+  }'
+```
+
+**GET `/leader_rotation` 응답 예시:**
+
+```json
+{
+  "status": "complete",
+  "old_truck_id": "truck0",
+  "new_truck_id": "truck1",
+  "timestamp": "2026-05-17T10:30:00Z"
+}
+```
 
 ---
 
@@ -338,25 +494,149 @@ python3 bridge/platoon_bridge_ctl.py --base-url http://127.0.0.1:18801 snapshot
 | 포트 | 용도 |
 |------|------|
 | 2000 | CARLA 시뮬레이터 |
-| 18801 | 브리지 서버 REST API |
-| 18802 | CARLA 트리거 수신 엔드포인트 |
-| 18789 | OpenClaw Platoon A 게이트웨이 |
-| 18790 | OpenClaw Platoon B 게이트웨이 |
+| 18789 | truck0 OpenClaw 게이트웨이 |
+| 18790 | truck1 OpenClaw 게이트웨이 |
+| 18801 | 브리지 REST API |
+| 18802 | CARLA 이송 트리거 (2군집 시나리오) |
+| 18803 | CARLA Leader Rotation 트리거 |
 
 ---
 
-## 주요 파라미터 (`config/simulation.json`)
+## 주요 파라미터
+
+### `config/simulation.json`
 
 | 파라미터 | 기본값 | 설명 |
 |----------|--------|------|
 | `sync_speed_kmh` | 20 | 군집 기본 주행 속도 |
 | `approach_fast_kmh` | 65 | 접근 시 최대 속도 |
-| `target_gap_m` | 6 | 차선 변경 전 확보할 목표 갭 |
+| `target_gap_m` | 6 | 차선 변경 전 목표 갭 |
 | `follow_dist_m` | 13 | CACC 추종 목표 거리 |
 | `platoon_spacing_m` | 16 | 군집 내 차량 간격 |
-| `merge_distance_limit_m` | 55 | 합류 트리거 최대 허용 거리 |
 | `merge_timeout_s` | 120 | 합류 타임아웃 (초) |
-| `post_merge_speed_kmh` | 50 | 합류 완료 후 순항 속도 |
+
+### Leader Rotation 시나리오 파라미터 (`leader_rotation_scenario.py`)
+
+| 상수 | 기본값 | 설명 |
+|------|--------|------|
+| `CRUISE_SPEED_KMH` | 30 | 군집 순항 속도 |
+| `TARGET_GAP_M` | 8.0 | truck2 뒤에서 목표 거리 (m) |
+| `LC_STEER` | 0.35 | 차선 변경 조향각 |
+| `SLOWDOWN_TARGET_KMH` | 15 | 감속 목표 속도 |
+| `TRIGGER_PORT` | 18803 | 선두 교체 트리거 수신 포트 |
+
+---
+
+## 테스트 (CARLA 없이)
+
+### OpenClaw 이전 단독 테스트
+
+CARLA 없이 Docker 이전 로직만 검증합니다.
+
+```bash
+# Docker 있는 환경에서 전체 이전 테스트
+python3 openclaw_migration/test_migration.py
+
+# Docker 없이 tar 생성/해제 로직만 테스트
+python3 openclaw_migration/test_migration.py --no-docker
+
+# 테스트 후 컨테이너 및 디렉터리 정리
+python3 openclaw_migration/test_migration.py --reset
+```
+
+### 브리지 서버 단독 테스트
+
+```bash
+# Mock 모드 (CARLA 없이 상태 머신 전체 진행)
+MOCK_CARLA=true python3 bridge/platoon_bridge_server.py
+
+# 다른 터미널에서 API 테스트
+curl -s http://127.0.0.1:18801/health
+curl -s http://127.0.0.1:18801/snapshot | python3 -m json.tool
+```
+
+### session tar 내용 확인
+
+```bash
+# tar 내용 목록 출력
+tar -tzvf .transfer/tx/openclaw_session.tar | head -30
+
+# .env 추출하여 토큰 확인
+python3 - <<'EOF'
+import tarfile
+with tarfile.open(".transfer/tx/openclaw_session.tar", "r:gz") as tar:
+    env = next((m for m in tar.getmembers() if m.name in ("./.env", ".env")), None)
+    if env:
+        print(tar.extractfile(env).read().decode())
+EOF
+```
+
+---
+
+## 트러블슈팅
+
+### openclaw-truck1이 시작되지 않음
+
+```bash
+# session tar가 정상적으로 전송되었는지 확인
+ls -lh .transfer/rx/openclaw_session.tar
+
+# truck1 vehicle 컨테이너 로그 확인
+docker logs vehicle-truck1 --tail 50
+
+# openclaw 이미지가 있는지 확인
+docker exec vehicle-truck1 docker image ls openclaw:local
+```
+
+### 토큰이 비어있어 Discord 연결 실패
+
+```bash
+# session tar 안의 .env 토큰 확인
+python3 openclaw_migration/replicator.py --ensure-base
+
+# .env 파일이 올바른지 확인
+cat .env | grep DISCORD_BOT_TOKEN
+```
+
+### CARLA 시나리오 연결 실패
+
+```bash
+# CARLA 서버 실행 중인지 확인
+netstat -tlnp | grep 2000
+
+# Python 경로 확인
+echo $PYTHONPATH
+python3 -c "import carla; print(carla.__version__)"
+```
+
+### 브리지 서버 포트 충돌
+
+```bash
+# 기존 프로세스 종료
+kill $(lsof -ti:18801) 2>/dev/null
+kill $(lsof -ti:18803) 2>/dev/null
+
+# 재시작
+docker compose restart bridge-server
+```
+
+### Docker 소켓 권한 오류 (DinD)
+
+```bash
+# vehicle 컨테이너가 Host docker.sock에 접근 가능한지 확인
+docker exec vehicle-truck0 docker ps
+# permission denied 오류 시:
+sudo chmod 666 /var/run/docker.sock
+```
+
+### base tar 재생성
+
+base tar가 손상되었거나 이미지가 업데이트된 경우:
+
+```bash
+rm .transfer/openclaw_base.tar
+python3 openclaw_migration/replicator.py --ensure-base
+```
 
 ---
 
