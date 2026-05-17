@@ -43,6 +43,7 @@ _PROJECT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(_PROJECT / "scenario" / "src"))
 sys.path.insert(0, str(_PROJECT / "openclaw_migration"))
 from PlatooningSimulator import Core, PlatooningControllers
+from PlatooningSimulator.PlatooningControllers import LeadNavigator, FollowerController
 
 # ── config (improve simulation.json 그대로) ──────────────────────────────────
 _CFG  = json.loads((_PROJECT / "config" / "simulation.json").read_text())
@@ -211,21 +212,36 @@ def _start_trigger_servers():
 # ── 군집 빌드 (improve build_truck_platoon 그대로) ────────────────────────────
 def build_platoon(sim, bp, spawn):
     p = Core.Platoon(sim)
+
+    # truck0: 선두 (LeadNavigator)
     lead = p.add_lead_vehicle(bp, spawn); sim.tick()
     lead.attach_controller(PlatooningControllers.LeadNavigator(lead, initial_speed=SYNC_SPEED_KMH))
     anchor_wpt = sim.map.get_waypoint(
         lead.get_location(), project_to_road=True, lane_type=carla.LaneType.Driving
     )
-    for i in range(PLATOON_SIZE - 1):
-        fwpt = _retreat_waypoint(anchor_wpt, PLATOON_SPACING_M * (i + 1))
-        fsp  = _spawn_from_waypoint(fwpt) if fwpt else spawn
-        f = p.add_follower_vehicle(bp, fsp)
-        _set_gap(f, NORMAL_FOLLOW_GAP_M)
-        f.attach_controller(PlatooningControllers.FollowerController(
-            f, v_ref_cacc, p, dependencies=[-1, 0]
-        ))
-        sim.tick()
+
+    # truck1: FollowerController (일단 truck0 추종)
+    fwpt = _retreat_waypoint(anchor_wpt, PLATOON_SPACING_M)
+    fsp  = _spawn_from_waypoint(fwpt) if fwpt else spawn
+    truck1 = p.add_follower_vehicle(bp, fsp)
+    _set_gap(truck1, NORMAL_FOLLOW_GAP_M)
+    truck1.attach_controller(PlatooningControllers.FollowerController(
+        truck1, v_ref_cacc, p, dependencies=[-1, 0]
+    ))
+    sim.tick()
+
+    # truck2: FollowerController (truck1 추종)
+    fwpt2 = _retreat_waypoint(anchor_wpt, PLATOON_SPACING_M * 2)
+    fsp2  = _spawn_from_waypoint(fwpt2) if fwpt2 else spawn
+    truck2 = p.add_follower_vehicle(bp, fsp2)
+    _set_gap(truck2, NORMAL_FOLLOW_GAP_M)
+    truck2.attach_controller(PlatooningControllers.FollowerController(
+        truck2, v_ref_cacc, p, dependencies=[-1, 0]
+    ))
+    sim.tick()
+
     p.store_follower_waypoints()
+    return p
     p.lead_waypoints.append(anchor_wpt)
     return p
 
@@ -290,7 +306,33 @@ class LeaderRotationCoordinator:
             self.state = RotState.MIGRATE
         else:
             print("[rotation] migrator 없음 — OpenClaw 이전 스킵")
-            self.state = RotState.GAP
+            # truck0 분리
+            new_p, _ = self.platoon.split(0, 0)
+            self._v = new_p[0]
+            try: self.sim.platoons.remove(new_p)
+            except ValueError: pass
+            self._v.attach_controller(None)
+            self._pid = _make_pid(self._v._carla_vehicle)
+
+            # truck1이 새로운 선두가 됨 → LeadNavigator 부여
+            truck1 = self.platoon[0]  # 이제 truck1이 lead_vehicle
+            truck1_nav = LeadNavigator(truck1._carla_vehicle, initial_speed=SYNC_SPEED_KMH)
+            truck1.attach_controller(truck1_nav)
+
+            # ★ 중요: lead_waypoints 초기화 (truck0의 경로 제거)
+            self.platoon.lead_waypoints.clear()
+            # truck1의 현재 위치부터 새로운 경로 시작
+            truck1_wpt = self.cmap.get_waypoint(truck1.get_location())
+            if truck1_wpt:
+                self.platoon.lead_waypoints.append(truck1_wpt)
+
+            print(f"[rotation] truck0 분리 완료")
+            print(f"[rotation] truck1 → LeadNavigator 부여 (독립 주행)")
+            print(f"[rotation] truck2 → truck1 추종 (lead_waypoints 초기화)")
+            print(f"[rotation] 잔여 군집: {len(self.platoon)}대")
+
+            # 바로 LC 시작
+            self._start_lc()
 
     def _update_gap(self):
         if self._v is None:
@@ -301,7 +343,13 @@ class LeaderRotationCoordinator:
             except ValueError: pass
             self._v.attach_controller(None)
             self._pid = _make_pid(self._v._carla_vehicle)
-            print(f"[rotation] truck0 분리. 잔여 군집: {len(self.platoon)}대 (truck1이 새 선두)")
+
+            # truck1을 독립 리더로 만들기 (LeadNavigator 부여)
+            truck1 = self.platoon[0]
+            truck1_nav = LeadNavigator(truck1._carla_vehicle, initial_speed=SYNC_SPEED_KMH)
+            truck1.attach_controller(truck1_nav)
+            print(f"[rotation] truck0 분리. truck1이 독립 리더로 전환 (LeadNavigator 부여)")
+            print(f"[rotation] 잔여 군집: {len(self.platoon)}대")
             self.last_status = "gap_opening"
             return
 
@@ -327,16 +375,21 @@ class LeaderRotationCoordinator:
             self._start_lc()
 
     def _start_lc(self):
+        ego_loc = self._v._carla_vehicle.get_location()
         ego_wpt = self.cmap.get_waypoint(
-            self._v._carla_vehicle.get_location(),
+            ego_loc,
             project_to_road=True, lane_type=carla.LaneType.Driving,
         )
-        self._target_lane_wpt = None
-        if ego_wpt:
-            adj = _driving_adjacent_lanes(ego_wpt)
-            if adj:
-                self._target_lane_wpt = adj[0]
-                print(f"[rotation] 목표 차선: road={self._target_lane_wpt.road_id} lane={self._target_lane_wpt.lane_id}")
+
+        # 목표: 오른쪽 차선으로 이동 (Y축 기준)
+        # 현재 Y 좌표에서 오른쪽으로 3.5m 이동
+        target_y = ego_loc.y + 3.5
+
+        self._target_y = target_y
+        self._original_y = ego_loc.y
+        self._original_lane_wpt = ego_wpt
+
+        print(f"[rotation] LC 시작: 현재 Y={ego_loc.y:.1f} → 목표 Y={target_y:.1f}")
         self._ticks = 0
         self.state = RotState.LC
 
@@ -344,40 +397,54 @@ class LeaderRotationCoordinator:
         if not self._v: return
         self._ticks += 1
         ego_loc = self._v._carla_vehicle.get_location()
+        ego_transform = self._v._carla_vehicle.get_transform()
+        yaw = math.radians(ego_transform.rotation.yaw)
 
-        if self._target_lane_wpt:
-            target_wpt = self.cmap.get_waypoint(
-                carla.Location(
-                    x=ego_loc.x + 20.0 * math.cos(math.radians(self._v._carla_vehicle.get_transform().rotation.yaw)),
-                    y=self._target_lane_wpt.transform.location.y,
-                    z=self._target_lane_wpt.transform.location.z,
-                ),
-                project_to_road=True, lane_type=carla.LaneType.Driving,
-            ) or _advance_waypoint(self._target_lane_wpt, 20.0)
-        else:
-            ego_wpt = self.cmap.get_waypoint(ego_loc, project_to_road=True, lane_type=carla.LaneType.Driving)
-            adj = _driving_adjacent_lanes(ego_wpt) if ego_wpt else []
-            target_wpt = _advance_waypoint(adj[0], 20.0) if adj else ego_wpt
+        # Y축 기준 차선 변경
+        current_y = ego_loc.y
+        y_diff = abs(current_y - self._target_y)
 
-        ctrl = self._pid.run_step(SYNC_SPEED_KMH, target_wpt)
+        # 목표: 전방 20m 지점, Y좌표는 목표 Y로
+        forward_x = ego_loc.x + 20.0 * math.cos(yaw)
+        forward_z = ego_loc.z
+
+        target_loc = carla.Location(x=forward_x, y=self._target_y, z=forward_z)
+        target_wpt = self.cmap.get_waypoint(target_loc, project_to_road=True, lane_type=carla.LaneType.Driving)
+
+        if not target_wpt:
+            target_wpt = self.cmap.get_waypoint(ego_loc, project_to_road=True, lane_type=carla.LaneType.Driving)
+
+        # 차선 변경 중에는 빠르게 이동
+        ctrl = self._pid.run_step(SYNC_SPEED_KMH * 1.2, target_wpt)
         ctrl.hand_brake = False
         self._v._carla_vehicle.apply_control(ctrl)
 
+        # 차선 변경 완료 판정: Y 좌표 차이가 0.8m 이내
+        if y_diff < 0.8:
+            print(f"[rotation] LC 완료 (Y={current_y:.1f}) → DONE (단순화)")
+            print(f"[rotation] >>> 선두 교체 완료! truck1=선두, truck0=독립 주행")
+            self.state = RotState.DONE
+            self._ticks = 0
+            _bridge_post("/leader_rotation", {"status":"complete"})
+            return
+
+        if self._ticks > 1000:
+            print(f"[rotation] LC 타임아웃 (Y={current_y:.1f}, 목표={self._target_y:.1f}) → DONE")
+            print(f"[rotation] >>> 선두 교체 완료! truck1=선두, truck0=독립 주행")
+            self.state = RotState.DONE
+            self._ticks = 0
+            _bridge_post("/leader_rotation", {"status":"complete"})
+
         tail = self.platoon[-1]
         lat = signed_lateral_offset(tail, self._v)
-        self.last_status = f"LC lat={lat:.2f} ticks={self._ticks}"
-
-        if abs(lat) >= 2.5 or self._ticks > 2000:
-            reason = "차선변경 완료" if abs(lat) >= 2.5 else "타임아웃"
-            print(f"[rotation] {reason} lat={lat:.2f} → SLOWDOWN")
-            self._ticks = 0; self.state = RotState.SLOWDOWN
+        self.last_status = f"LC Y={current_y:.1f}/{self._target_y:.1f} diff={y_diff:.2f} ticks={self._ticks}"
 
     def _update_slowdown(self):
         if not self._v: return
         self._ticks += 1
         tail = self.platoon[-1]
         off  = signed_longitudinal_offset(tail, self._v)
-        target_offset = -TARGET_GAP_M
+        target_offset = -TARGET_GAP_M  # -13
 
         ego_wpt = self.cmap.get_waypoint(
             self._v._carla_vehicle.get_location(),
@@ -393,7 +460,9 @@ class LeaderRotationCoordinator:
             self._v._carla_vehicle.apply_control(ctrl)
 
         self.last_status = f"SLOWDOWN off={off:.1f}"
-        if off <= target_offset or self._ticks > 3000:
+        # off가 양수면 truck0이 truck2보다 뒤에 있음 (목표 달성)
+        # 충분히 뒤로 갔으면 (예: 20m 이상) REJOIN 시작
+        if off >= 20.0 or self._ticks > 3000:
             print(f"[rotation] 후방 이동 완료 off={off:.1f} → REJOIN")
             self._ticks = 0; self.state = RotState.REJOIN
 
@@ -404,7 +473,7 @@ class LeaderRotationCoordinator:
         off  = signed_longitudinal_offset(tail, self._v)
         lat  = signed_lateral_offset(tail, self._v)
 
-        # ego 현재 위치에서 tail 차선으로 점진적 이동
+        # ego 현재 위치
         ego_wpt = self.cmap.get_waypoint(
             self._v._carla_vehicle.get_location(),
             project_to_road=True, lane_type=carla.LaneType.Driving,
@@ -414,28 +483,58 @@ class LeaderRotationCoordinator:
             project_to_road=True, lane_type=carla.LaneType.Driving,
         )
 
-        if ego_wpt and tail_wpt:
-            # 같은 차선이면 tail 뒤 TARGET_GAP_M 위치 목표
-            if _same_lane(ego_wpt, tail_wpt):
-                # tail 현재 위치에서 전방 5m (tail을 따라가기)
-                target_wpt = _advance_waypoint(tail_wpt, 5.0)
-            else:
-                # 다른 차선이면 ego 전방 20m + tail 차선 y좌표로 유도
-                ego_loc = self._v._carla_vehicle.get_location()
-                target_wpt = self.cmap.get_waypoint(
-                    carla.Location(
-                        x=ego_loc.x + 20.0 * math.cos(math.radians(self._v._carla_vehicle.get_transform().rotation.yaw)),
-                        y=tail_wpt.transform.location.y,
-                        z=tail_wpt.transform.location.z,
-                    ),
-                    project_to_road=True, lane_type=carla.LaneType.Driving,
-                ) or _advance_waypoint(ego_wpt, 20.0)
+        # 같은 차선이면 tail 따라가기
+        if ego_wpt and tail_wpt and _same_lane(ego_wpt, tail_wpt):
+            target_wpt = _advance_waypoint(tail_wpt, 5.0)
         else:
-            target_wpt = None
+            # 다른 차선: 원래 차선(저장해둔 차선)으로 복귀
+            # LC에서 저장한 original_lane_wpt 사용
+            ego_loc = self._v._carla_vehicle.get_location()
+            ego_yaw = math.radians(self._v._carla_vehicle.get_transform().rotation.yaw)
+
+            # 원래 차선의 전방 waypoint를 목표로
+            if hasattr(self, '_original_lane_wpt') and self._original_lane_wpt:
+                # 원래 차선을 ego 위치에서 다시 찾기 (업데이트)
+                original_lane_updated = self.cmap.get_waypoint(
+                    carla.Location(
+                        x=ego_loc.x,
+                        y=self._original_lane_wpt.transform.location.y,
+                        z=ego_loc.z,
+                    ),
+                    project_to_road=True,
+                    lane_type=carla.LaneType.Driving,
+                )
+                if original_lane_updated:
+                    target_wpt = _advance_waypoint(original_lane_updated, 20.0)
+                else:
+                    # fallback: ego 전방 + 원래 차선 y좌표
+                    target_wpt = self.cmap.get_waypoint(
+                        carla.Location(
+                            x=ego_loc.x + 20.0 * math.cos(ego_yaw),
+                            y=self._original_lane_wpt.transform.location.y,
+                            z=self._original_lane_wpt.transform.location.z,
+                        ),
+                        project_to_road=True,
+                        lane_type=carla.LaneType.Driving,
+                    )
+            else:
+                # fallback: tail 차선으로
+                if tail_wpt:
+                    target_wpt = self.cmap.get_waypoint(
+                        carla.Location(
+                            x=ego_loc.x + 20.0 * math.cos(ego_yaw),
+                            y=tail_wpt.transform.location.y,
+                            z=tail_wpt.transform.location.z,
+                        ),
+                        project_to_road=True,
+                        lane_type=carla.LaneType.Driving,
+                    )
+                else:
+                    target_wpt = _advance_waypoint(ego_wpt, 20.0) if ego_wpt else None
 
         if target_wpt:
             tail_spd = tail.speed * 3.6
-            # tail보다 약간 빠르게 (따라잡기)
+            # tail보다 약간 빠르게
             v_cmd = tail_spd + 2.0
             v_cmd = max(MERGE_MIN_SPEED_KMH, min(v_cmd, SYNC_SPEED_KMH + 5.0))
             ctrl = self._pid.run_step(float(v_cmd), target_wpt)
