@@ -630,7 +630,7 @@ def main():
             camera.update(coord.camera_target())
 
             if step % 100 == 0:
-                d_status = _get_docker_status(); d_str = f"[{", ".join(d_status)}]" if d_status else "[No Containers]"; print(f"t={step*DT:6.1f}s speeds=({speeds()}) gaps=({gaps()}) docker={d_str} state={coord.status_line()}")
+                d_status = _get_docker_status(); d_str = f"[{', '.join(d_status)}]" if d_status else "[No Containers]"; print(f"t={step*DT:6.1f}s speeds=({speeds()}) gaps=({gaps()}) docker={d_str} state={coord.status_line()}")
 
             if coord.state == RotState.DONE and not auto_triggered:
                 # DONE 상태가 되면 한 번만 메시지 출력하고 계속 주행
