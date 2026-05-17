@@ -516,7 +516,8 @@ def main():
 
     cmap = sim.map
     bps  = sim.get_vehicle_blueprints()
-    bp   = bps.filter("vehicle.carlamotors.european_hgv")[0]  # improve 동일
+    # CARLA 0.9.13에는 european_hgv 없음 → firetruck 사용
+    bp   = bps.filter("vehicle.carlamotors.firetruck")[0]
     print(f"[main] blueprint: {bp.id}")
 
     platoon = build_platoon(sim, bp, PLATOON_SPAWN)
