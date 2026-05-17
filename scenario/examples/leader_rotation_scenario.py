@@ -550,8 +550,10 @@ def main():
 
     cmap = sim.map
     bps  = sim.get_vehicle_blueprints()
-    # CARLA 0.9.13에는 european_hgv 없음 → firetruck 사용
-    bp   = bps.filter("vehicle.carlamotors.firetruck")[0]
+    # ⚠️ 사용자의 스크린샷과 동일한 Volvo FM7 (CarlaCola) 모델로 변경
+    bp   = bps.filter("vehicle.carlamotors.carlacola")[0]
+    if bp.has_attribute("color"):
+        bp.set_attribute("color", "255,0,0")
     print(f"[main] blueprint: {bp.id}")
 
     platoon = build_platoon(sim, bp, PLATOON_SPAWN)
