@@ -168,6 +168,19 @@ def _make_pid(carla_vehicle):
     )
 
 # ── 브리지 헬퍼 ───────────────────────────────────────────────────────────────
+import subprocess
+
+def _get_docker_status():
+    try:
+        r = subprocess.run(
+            ["docker", "ps", "--filter", "name=openclaw", "--format", "{{.Names}}"],
+            capture_output=True, text=True, timeout=1
+        )
+        containers = r.stdout.strip().split("\n")
+        return [c for c in containers if c]
+    except:
+        return []
+
 def _bridge_post(path, body=None):
     try:
         req = urllib.request.Request(
@@ -615,7 +628,7 @@ def main():
             camera.update(coord.camera_target())
 
             if step % 100 == 0:
-                print(f"t={step*DT:6.1f}s speeds=({speeds()}) gaps=({gaps()}) state={coord.status_line()}")
+                d_status = _get_docker_status(); d_str = f"[{", ".join(d_status)}]" if d_status else "[No Containers]"; print(f"t={step*DT:6.1f}s speeds=({speeds()}) gaps=({gaps()}) docker={d_str} state={coord.status_line()}")
 
             if coord.state == RotState.DONE and not auto_triggered:
                 # DONE 상태가 되면 한 번만 메시지 출력하고 계속 주행
