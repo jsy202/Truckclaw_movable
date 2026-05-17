@@ -2,11 +2,11 @@
 # ============================================================
 #  carla_start.sh — CARLA 0.9.13 Town06 원클릭 실행
 # ============================================================
-CARLA_BIN="$HOME/carla-0.9.13/CarlaUE4/Binaries/Linux/CarlaUE4-Linux-Shipping"
+CARLA_BIN="/opt/carla-0.9.6/CarlaUE4/Binaries/Linux/CarlaUE4-Linux-Shipping"
 CARLA_PORT=2000
 CARLA_LOG="$HOME/carla_server.log"
 CARLA_PID_FILE="/tmp/carla_server.pid"
-PYAPI="$HOME/carla-0.9.13/PythonAPI/carla/dist/carla-0.9.13-py3.7-linux-x86_64.egg:$HOME/carla-0.9.13/PythonAPI/carla"
+PYAPI="/opt/carla-0.9.6/PythonAPI/carla/dist/carla-0.9.6-py3.5-linux-x86_64.egg:/opt/carla-0.9.6/PythonAPI/carla"
 
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; BOLD='\033[1m'; NC='\033[0m'
 log()  { echo -e "${CYAN}[carla]${NC} $1"; }

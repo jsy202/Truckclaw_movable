@@ -29,9 +29,9 @@ from enum import Enum, auto
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
-# ── CARLA 0.9.13 경로 ────────────────────────────────────────────────────────
-CARLA_EGG = str(Path.home() / "carla-0.9.13/PythonAPI/carla/dist/carla-0.9.13-py3.7-linux-x86_64.egg")
-CARLA_API = str(Path.home() / "carla-0.9.13/PythonAPI/carla")
+# ── CARLA 0.9.6 경로 ─────────────────────────────────────────────────────────
+CARLA_EGG = "/opt/carla-0.9.6/PythonAPI/carla/dist/carla-0.9.6-py3.5-linux-x86_64.egg"
+CARLA_API = "/opt/carla-0.9.6/PythonAPI/carla"
 for p in (CARLA_EGG, CARLA_API):
     if p not in sys.path: sys.path.insert(0, p)
 
@@ -551,7 +551,7 @@ def main():
     cmap = sim.map
     bps  = sim.get_vehicle_blueprints()
     # ⚠️ 사용자의 스크린샷과 동일한 Volvo FM7 (CarlaCola) 모델로 변경
-    bp   = bps.filter("vehicle.carlamotors.carlacola")[0]
+    bp   = bps.filter("vehicle.carlamotors.european_hgv")[0]
     print(f"[main] blueprint: {bp.id}")
 
     platoon = build_platoon(sim, bp, PLATOON_SPAWN)
