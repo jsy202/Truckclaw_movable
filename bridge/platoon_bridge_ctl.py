@@ -5,7 +5,7 @@ import sys
 from urllib import error, parse, request
 
 
-def _http(method: str, url: str, payload: dict | None = None) -> dict:
+def _http(method, url, payload=None):
     data = None
     headers = {}
     if payload is not None:
