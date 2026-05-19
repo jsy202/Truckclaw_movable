@@ -218,6 +218,35 @@ python3 scenario/examples/leader_rotation_scenario.py --auto-trigger-s 30
 python3 scenario/examples/leader_rotation_scenario.py --no-openclaw
 ```
 
+### OpenAI OAuth 로그인
+
+OpenAI OAuth는 OpenClaw 모델 provider 인증이며, `OPENCLAW_GATEWAY_TOKEN`과는 별도입니다.
+Gateway가 먼저 떠 있어야 합니다.
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}' | grep openclaw
+curl http://127.0.0.1:18789/healthz
+```
+
+truck0 gateway 기준 로그인:
+
+```bash
+docker exec -it openclaw-truck0 bash -lc \
+  'HOME=/data/openclaw openclaw models auth login --provider openai-codex --set-default'
+```
+
+브라우저 URL이 출력되면 호스트 브라우저에서 열어 OpenAI 로그인을 완료하세요.
+원격/헤드리스 환경에서 callback 수신이 안 되면 OpenClaw가 안내하는 대로 리디렉션 URL
+또는 code를 터미널에 붙여 넣으면 됩니다. 로그인 결과는 `.openclaw-truck0/.openclaw`
+상태에 저장되며, 선두 교체 session tar에 포함되어 truck1로 이동합니다.
+
+확인:
+
+```bash
+docker exec -it openclaw-truck0 bash -lc \
+  'HOME=/data/openclaw openclaw models status --probe'
+```
+
 ### OpenClaw 이전만 단독 테스트 (CARLA 불필요)
 ```bash
 python3 openclaw_migration/test_migration.py

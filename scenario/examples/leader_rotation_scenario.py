@@ -30,10 +30,10 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 # ── CARLA 0.9.6 경로 ─────────────────────────────────────────────────────────
-CARLA_EGG = "/opt/carla-0.9.6/PythonAPI/carla/dist/carla-0.9.6-py3.5-linux-x86_64.egg"
-CARLA_API = "/opt/carla-0.9.6/PythonAPI/carla"
-for p in (CARLA_EGG, CARLA_API):
-    if p not in sys.path: sys.path.insert(0, p)
+# CARLA_EGG = "/opt/carla-0.9.6/PythonAPI/carla/dist/carla-0.9.6-py3.5-linux-x86_64.egg"
+# CARLA_API = "/opt/carla-0.9.6/PythonAPI/carla"
+# for p in (CARLA_EGG, CARLA_API):
+#     if p not in sys.path: sys.path.insert(0, p)
 
 import carla
 import numpy as np
@@ -52,15 +52,15 @@ _spd  = _CFG["speeds"]; _gap = _CFG["gaps"]; _sp = _CFG["spawns"]
 DT                  = 0.01
 SAMPLING_RATE       = 10
 PLATOON_SIZE        = 3
-SYNC_SPEED_KMH      = float(_spd["sync_speed_kmh"])          # 18
-MERGE_MIN_SPEED_KMH = float(_spd["merge_min_speed_kmh"])     # 15
-NORMAL_FOLLOW_GAP_M = float(_gap["normal_follow_gap_m"])     # 12
-OPEN_GAP_M          = 30.0 # ⚠️ 더 넓게 설정
-OPEN_GAP_READY_M    = 25.0 # ⚠️ 안전을 위해 25m 확보
-TARGET_GAP_M        = float(_gap["target_gap_m"])            # 13
-PLATOON_SPACING_M   = float(_gap["platoon_spacing_m"])       # 18
+SYNC_SPEED_KMH      = 20.0
+MERGE_MIN_SPEED_KMH = 15.0
+NORMAL_FOLLOW_GAP_M = 15.0                                   # ⚠️ 12 -> 15 (고속 대응)
+OPEN_GAP_M          = 25.0                                   # ⚠️ 30 -> 25 (단축)
+OPEN_GAP_READY_M    = 20.0                                   # ⚠️ 25 -> 20 (단축)
+TARGET_GAP_M        = 13.0
+PLATOON_SPACING_M   = 20.0                                   # ⚠️ 18 -> 20
 LANE_STEP_COMPLETE_M = 0.9
-GAP_STABLE_TICKS    = 50
+GAP_STABLE_TICKS    = 10                                     # ⚠️ 50 -> 10 (빠른 전환)
 
 BRIDGE_URL      = "http://127.0.0.1:18801"
 TRIGGER_PORT    = 18802
@@ -160,26 +160,32 @@ def compute_lead_route(cmap, loc, dist=3000.0, step=5.0):
     return route
 
 def _make_pid(carla_vehicle):
-    lat = {"K_P": 3.2, "K_I": 0.1,  "K_D": 0.25, "dt": DT}
-    lon = {"K_P": 0.65, "K_I": 0.15, "K_D": 0.05, "dt": DT}
+    lat = {"K_P": 5.5, "K_I": 0.2,  "K_D": 0.4, "dt": DT}   # ⚠️ K_P 4.5 -> 5.5 (더욱 강력한 조향)
+    lon = {"K_P": 1.0, "K_I": 0.2,  "K_D": 0.05, "dt": DT}  # ⚠️ 종방향 응답성 더욱 강화
     return nav_controller.VehiclePIDController(
         carla_vehicle, args_lateral=lat, args_longitudinal=lon,
-        max_brake=0.4, max_throttle=0.8,
+        max_brake=0.4, max_throttle=1.0,                    # ⚠️ 가속력 최대
     )
+
 
 # ── 브리지 헬퍼 ───────────────────────────────────────────────────────────────
 import subprocess
 
 def _get_docker_status():
+    """각 트럭별 docker 상태 반환."""
+    result = {"truck0": "없음", "truck1": "없음"}
     try:
-        r = subprocess.run(
-            ["docker", "ps", "--filter", "name=openclaw", "--format", "{{.Names}}"],
-            capture_output=True, text=True, timeout=1
-        )
-        containers = r.stdout.strip().split("\n")
-        return [c for c in containers if c]
-    except:
-        return []
+        for name in ("openclaw-truck0", "openclaw-truck1"):
+            r = subprocess.run(
+                ["docker", "ps", "--all", "--filter", f"name=^/{name}$",
+                 "--format", "{{.Status}}"],
+                capture_output=True, text=True, timeout=1)
+            s = r.stdout.strip()
+            key = "truck0" if "truck0" in name else "truck1"
+            result[key] = s if s else "없음"
+    except Exception:
+        pass
+    return result
 
 def _bridge_post(path, body=None):
     try:
@@ -339,14 +345,17 @@ class LeaderRotationCoordinator:
             self._v.attach_controller(None)
             self._pid = _make_pid(self._v._carla_vehicle)
             
-            # truck1(새 리더) 경로 재설정
+            # truck1(새 리더) 경로 재설정 — 속도 유지 (truck0만 감속)
             new_lead = self.platoon[0]
             if not isinstance(new_lead.controller, LeadNavigator):
                 nav = LeadNavigator(new_lead._carla_vehicle, initial_speed=SYNC_SPEED_KMH)
                 new_lead.attach_controller(nav)
+            else:
+                new_lead.controller.set_target_speed(SYNC_SPEED_KMH)
+
             new_lead.controller.waypoints_ahead = compute_lead_route(self.cmap, new_lead.get_location())
-            
-            print(f"[rotation] truck0 분리. truck1이 새로운 리더로 승격됨.")
+
+            print(f"[rotation] truck0 분리. truck1이 새로운 리더로 승격됨 (정속 유지).")
             self.last_status = "gap_opening"
             return
 
@@ -354,18 +363,18 @@ class LeaderRotationCoordinator:
         new_lead = self.platoon[0]
         gap = new_lead.distance_to(self._v)
         
-        if gap >= OPEN_GAP_READY_M: self._gap_ok += 1
+        if gap >= 12.0: self._gap_ok += 1                    # ⚠️ 20m -> 12m (너무 멀어지지 않게)
         else: self._gap_ok = 0
 
         ego_wpt = self.cmap.get_waypoint(self._v.get_location())
         if ego_wpt:
-            target_wpt = _advance_waypoint(ego_wpt, 20.0)
-            # ⚠️ 중요: truck0가 '가속'하여 거리를 벌려야 함 (뒤차와 부딪히지 않게)
-            v_cmd = SYNC_SPEED_KMH * 1.3
+            target_wpt = _advance_waypoint(ego_wpt, 10.0)
+            # 가속해서 차선 변경 공간 확보
+            v_cmd = SYNC_SPEED_KMH * 1.3 
             ctrl = self._pid.run_step(v_cmd, target_wpt)
             self._v.apply_control(ctrl)
 
-        self.last_status = f"gap={gap:.1f}/{OPEN_GAP_READY_M}m ok={self._gap_ok}"
+        self.last_status = f"gap={gap:.1f}/12.0m ok={self._gap_ok}"
         if self._gap_ok >= GAP_STABLE_TICKS:
             print(f"[rotation] 간격 확보 완료 ({gap:.1f}m) → LC 시작")
             self._start_lc()
@@ -392,10 +401,11 @@ class LeaderRotationCoordinator:
         ego_loc = self._v.get_location()
         ego_wpt = self.cmap.get_waypoint(ego_loc)
         
-        target_wpt = _advance_waypoint(self._target_lane_wpt, 20.0)
+        target_wpt = _advance_waypoint(self._target_lane_wpt, 8.0)  # ⚠️ 15m -> 8m (더욱 급격하게 꺾음)
         self._target_lane_wpt = _advance_waypoint(self._target_lane_wpt, self._v.speed * DT)
         
-        ctrl = self._pid.run_step(SYNC_SPEED_KMH, target_wpt)
+        v_cmd = SYNC_SPEED_KMH * 1.5                               # ⚠️ 1.3 -> 1.5 (최대한 빠르게 이탈)
+        ctrl = self._pid.run_step(v_cmd, target_wpt)
         self._v.apply_control(ctrl)
 
         # ⚠️ 차선 변경 완료 판정: 3.5m 정도면 충분히 옆 차선 안착
@@ -403,8 +413,11 @@ class LeaderRotationCoordinator:
         
         if (ego_wpt.road_id == self._target_lane_id[0] and 
             ego_wpt.lane_id == self._target_lane_id[1] and 
-            lat_dist > 3.5):
+            lat_dist > 3.0):                                 # ⚠️ 3.5 -> 3.0 (빠른 판정)
             print(f"[rotation] 차선 변경 완전 완료 (lat={lat_dist:.1f}m) → SLOWDOWN")
+            
+            # ⚠️ 여기서 속도 제한 해제하면 안됨 (합류할 때까지 천천히 가야 함)
+            
             self.state = RotState.SLOWDOWN
             self._ticks = 0
             return
@@ -425,16 +438,15 @@ class LeaderRotationCoordinator:
         target_wpt = _advance_waypoint(self._target_lane_wpt, 20.0)
         self._target_lane_wpt = _advance_waypoint(self._target_lane_wpt, self._v.speed * DT)
         
-        # ⚠️ 더 확실하게 뒤로 처지기 위해 속도를 50%로 낮춤
-        v_cmd = tail.speed * 3.6 * 0.5 
-        v_cmd = max(4.0, v_cmd)
+        # 확실하게 뒤로 처지도록 최소속도로 감속
+        v_cmd = max(5.0, tail.speed * 3.6 * 0.2)
         ctrl = self._pid.run_step(float(v_cmd), target_wpt)
         self._v.apply_control(ctrl)
 
         self.last_status = f"SLOWDOWN off={off:.1f}m lat={abs(signed_lateral_offset(tail, self._v)):.1f}"
 
-        # ⚠️ 35m 정도면 충분히 안전하면서도 효율적인 합류가 가능합니다.
-        if off >= 35.0 or self._ticks > 8000:
+        # 충분한 여유 간격 확보 후 합류 (NORMAL_FOLLOW_GAP_M + 여유)
+        if off >= NORMAL_FOLLOW_GAP_M + 10.0 or self._ticks > 8000:
             print(f"[rotation] 후방 위치 확보 (off={off:.1f}m) → REJOIN 시작")
             self._ticks = 0
             self.state = RotState.REJOIN
@@ -444,8 +456,12 @@ class LeaderRotationCoordinator:
         tail = self.platoon[-1]
         ego_loc = self._v.get_location()
         ego_wpt = self.cmap.get_waypoint(ego_loc)
+        
+        # ⚠️ 위치 오차 계산 (v_cmd 결정에 필요)
+        lat_off = abs(signed_lateral_offset(tail, self._v))
+        off = signed_longitudinal_offset(tail, self._v)
 
-        # ⚠️ 동적 타겟팅: 현재 위치 기준으로 목표 차선의 전방 30m 지점 추적
+        # ⚠️ 동적 타겟팅: 현재 위치 기준으로 목표 차선의 전방 지점 추적
         adj = _driving_adjacent_lanes(ego_wpt)
         target_lane_wpt = ego_wpt
         for a in adj:
@@ -453,26 +469,28 @@ class LeaderRotationCoordinator:
                 target_lane_wpt = a
                 break
         
-        target_wpt = _advance_waypoint(target_lane_wpt, 30.0)
+        target_wpt = _advance_waypoint(target_lane_wpt, 15.0) # ⚠️ 합류 시 더 급격한 조향
         
-        # 확실하게 따라붙기 위해 앞차보다 5km/h 가속 (최대 25km/h 제한)
-        v_cmd = tail.speed * 3.6 + 5.0
-        v_cmd = min(v_cmd, 25.0) 
+        # 목표 간격(NORMAL_FOLLOW_GAP_M) 기준 속도 조절
+        # off > target: 가속 / off < target: 감속 (충돌 방지)
+        speed_bonus = np.clip((off - NORMAL_FOLLOW_GAP_M) * 1.5, -SYNC_SPEED_KMH * 0.8, SYNC_SPEED_KMH * 2.0)
+        v_cmd = max(3.0, tail.speed * 3.6 + speed_bonus)
         
         ctrl = self._pid.run_step(float(v_cmd), target_wpt)
         self._v.apply_control(ctrl)
 
-        lat_off = abs(signed_lateral_offset(tail, self._v))
-        off = signed_longitudinal_offset(tail, self._v)
         self.last_status = f"REJOIN off={off:.1f}m lat={lat_off:.1f}"
 
-        # 원래 차선 복귀 완료 판정 (ID 일치 및 횡방향 오차 0.6m 이내)
-        if (ego_wpt.lane_id == self._original_lane_id[1] and lat_off < 0.6):
-            print(f"[rotation] 원래 차선 복귀 완료 → FINALIZING")
+        # 원래 차선 복귀 완료 판정 (횡방향 오차 0.8m 이내로 강화 - 안정성 확보)
+        if (ego_wpt.lane_id == self._original_lane_id[1] and lat_off < 0.8):
+            print(f"[rotation] 원래 차선 복귀 완료 (lat={lat_off:.1f}m) → FINALIZING")
             self._finalize_join()
 
     def _finalize_join(self):
         self.platoon.merge(self._v_platoon)
+        
+        # 합류 완료 후 전체 대열 속도 정상화
+        self.platoon[0].controller.set_target_speed(SYNC_SPEED_KMH)
         
         new_follower = self.platoon[-1]
         new_follower.attach_controller(FollowerController(
@@ -507,7 +525,7 @@ class SmoothCamera:
         if self.x is None: self.x, self.y = loc.x, loc.y
         self.x += 0.05 * (loc.x - self.x); self.y += 0.05 * (loc.y - self.y)
         self.s.set_transform(carla.Transform(
-            carla.Location(x=self.x, y=self.y, z=loc.z + 85),
+            carla.Location(x=self.x, y=self.y, z=loc.z + 60),
             carla.Rotation(pitch=-90),
         ))
 
@@ -539,6 +557,19 @@ def main():
     p.add_argument("--no-openclaw",    action="store_true")
     p.add_argument("--auto-trigger-s", type=float, default=0.0)
     args = p.parse_args()
+
+    # ── watch 스크립트 로그 초기화 (이전 실행 잔존 방지) ─────────────────────
+    _watch_logs = [
+        _PROJECT / ".transfer" / "telemetry.log",
+        _PROJECT / ".transfer" / "tx" / ".progress.log",
+        _PROJECT / ".transfer" / "rx" / ".progress.log",
+    ]
+    for _p in _watch_logs:
+        try:
+            if _p.exists():
+                _p.write_text("")
+        except Exception:
+            pass
 
     _bridge_reload()
     _start_trigger_servers()
@@ -595,9 +626,8 @@ def main():
     coord  = LeaderRotationCoordinator(platoon, cmap, sim, migrator=migrator)
     camera = SmoothCamera(sim.spectator)
     kb     = KeyInput()
-    _start_cleanup_watcher("openclaw-truck0")
 
-    step = 0; auto_triggered = False
+    step = 0; auto_triggered = False; cleanup_done = False
 
     def speeds():
         # 분리 전후 모두 안전하게 출력되도록 수정
@@ -646,17 +676,57 @@ def main():
             camera.update(coord.camera_target())
 
             if step % 100 == 0:
-                d_status = _get_docker_status(); d_str = f"[{', '.join(d_status)}]" if d_status else "[No Containers]"; print(f"t={step*DT:6.1f}s speeds=({speeds()}) gaps=({gaps()}) docker={d_str} state={coord.status_line()}")
+                d_status = _get_docker_status()
+                t0_doc = "Up" if "Up" in d_status["truck0"] else "없음"
+                t1_doc = "Up" if "Up" in d_status["truck1"] else "없음"
+                rot_state = coord.state.name
+                telem = (
+                    f"t={step*DT:6.1f}s "
+                    f"speeds=({speeds()}) "
+                    f"gaps=({gaps()}) "
+                    f"truck1=[openclaw-truck0:{t0_doc}] "
+                    f"truck2=[openclaw-truck1:{t1_doc}] "
+                    f"truck3=[none] "
+                    f"state={rot_state}"
+                )
+                print(telem)
+                _telem_log = _PROJECT / ".transfer" / "telemetry.log"
+                _telem_log.parent.mkdir(parents=True, exist_ok=True)
+                with open(_telem_log, "a") as _tf:
+                    _tf.write(telem + "\n")
 
             if coord.state == RotState.DONE and not auto_triggered:
-                # DONE 상태가 되면 한 번만 메시지 출력하고 계속 주행
                 print("[main] 선두 교체 완료! 계속 주행...")
-                auto_triggered = True  # 메시지 중복 방지
+                auto_triggered = True
+
+            # ── 자리 체인지 완료 후 구 선두 docker 삭제 ────────────────────
+            if coord.state == RotState.DONE and not cleanup_done:
+                cleanup_done = True
+                tx_log = _PROJECT / ".transfer" / "tx" / ".progress.log"
+                tx_log.parent.mkdir(parents=True, exist_ok=True)
+                with open(tx_log, "a") as _tf:
+                    _tf.write("\n=== DELETE START ===\n")
+                    _tf.write("[cleanup] openclaw-truck0 컨테이너 삭제 중...\n")
+                try:
+                    from replicator import delete_old_openclaw
+                    delete_old_openclaw("openclaw-truck0")
+                    with open(tx_log, "a") as _tf:
+                        _tf.write("[cleanup] openclaw-truck0 삭제 완료 ✓\n")
+                except Exception as _e:
+                    with open(tx_log, "a") as _tf:
+                        _tf.write(f"[cleanup] 삭제 실패: {_e}\n")
 
             step += 1
     finally:
         kb.restore()
         sim.release_synchronous()
+        # watch 스크립트 로그 초기화 (Ctrl+C 후 재시작 시 잔존 방지)
+        for _p in _watch_logs:
+            try:
+                if _p.exists():
+                    _p.write_text("")
+            except Exception:
+                pass
 
 if __name__ == "__main__":
     main()

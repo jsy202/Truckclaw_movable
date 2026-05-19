@@ -33,9 +33,11 @@ services:
     environment:
       TRUCK_ID: truck0
       OPENCLAW_DATA_DIR: /data/openclaw
+      OPENCLAW_HOST_DATA_DIR: ${TRUCK0_CONFIG_DIR:-/home/user/Downloads/Truckclaw_movable/.openclaw-truck0}
       DISCORD_BOT_TOKEN: ${DISCORD_BOT_TOKEN}
       OPENCLAW_GATEWAY_TOKEN: ${OPENCLAW_GATEWAY_TOKEN}
       OPENCLAW_GATEWAY_PORT: 18789
+      OPENCLAW_IMAGE: ${OPENCLAW_IMAGE:-openclaw:local}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock   # DinD 핵심
@@ -43,6 +45,18 @@ services:
       - ./.transfer:/transfer                        # V2V 전송 버퍼
       - ./bridge:/project/scripts:ro
       - ./openclaw_migration:/project/openclaw_migration:ro
+    network_mode: host
+    restart: unless-stopped
+    depends_on:
+      - bridge-server
+
+  # ── vehicle-truck2 (더미 팔로워) ─────────────────────────────────────────────
+  vehicle-truck2:
+    image: python:3.10-slim
+    container_name: vehicle-truck2
+    command: >
+      sh -c "echo '[vehicle-truck2] CACC 팔로워 — OpenClaw 없음' &&
+             tail -f /dev/null"
     network_mode: host
     restart: unless-stopped
     depends_on:
@@ -58,10 +72,12 @@ services:
     environment:
       TRUCK_ID: truck1
       OPENCLAW_DATA_DIR: /data/openclaw
+      OPENCLAW_HOST_DATA_DIR: ${TRUCK1_CONFIG_DIR:-/home/user/Downloads/Truckclaw_movable/.openclaw-truck1}
       # 토큰은 session tar 안에 포함되어 전달됨 — 여기선 빈값
       DISCORD_BOT_TOKEN: ""
       OPENCLAW_GATEWAY_TOKEN: ""
       OPENCLAW_GATEWAY_PORT: 18790
+      OPENCLAW_IMAGE: ${OPENCLAW_IMAGE:-openclaw:local}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock

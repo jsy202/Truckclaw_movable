@@ -33,7 +33,7 @@ log = np.zeros([N, 3, simulation_length*sampling_rate])
 simulation = Core.Simulation(world="Town06", dt=float(1 / sampling_rate / pid_rate), large_map=False, render=True)
 
 bps = simulation.get_vehicle_blueprints()
-bp = bps.filter("*vehicle.bmw.grandtourer*")[0]
+bp = bps.filter("vehicle.carlamotors.european_hgv")[0]
 spawn_points = simulation.map.get_spawn_points()
 
 platoon = Core.Platoon(simulation)

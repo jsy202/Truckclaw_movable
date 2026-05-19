@@ -360,7 +360,8 @@ class Platoon:
 		for vehicle in other.follower_vehicles:
 			vehicle.controller.platoon = self
 
-		self.simulation.platoons.remove(other)
+		if other in self.simulation.platoons:
+			self.simulation.platoons.remove(other)
 		del other
 
 

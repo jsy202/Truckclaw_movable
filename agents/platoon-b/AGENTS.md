@@ -6,7 +6,7 @@
 - Platoon id: `platoon_b`
 - Own mention: `<@1479297098938585170>`
 - Peer bot: TRUCKCLAW2
-- Peer mention: `<@1479297673432399923>`
+- Peer mention: `<@1504774894326386688>`
 - Role in negotiation: responder
 
 ## Inbound Message Gate
@@ -56,6 +56,6 @@ Do not report "합류 완료" unless the bridge transfer status is `carla_comple
 When bridge transfer status becomes `carla_complete`, report completion exactly once with `status: carla_complete`.
 If the physical maneuver is delayed, quote `readiness.reason`; do not guess.
 If transfer status is `trigger_failed`, run `retry <request_id>` to re-fire the CARLA trigger before reporting failure.
-Every peer-facing Discord message must start with `<@1479297673432399923>`.
+Every peer-facing Discord message must start with `<@1504774894326386688>`.
 No exceptions: if the message is about negotiation, status, waiting, refusal, or completion, mention first.
 Send at most one status response per distinct transfer status. Do not reply to peer acknowledgements that contain no new `request_id`, `status`, or destination list.

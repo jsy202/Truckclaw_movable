@@ -35,7 +35,7 @@ cat /data/openclaw/.openclaw/workspace/data/vehicle_destinations.json
 Reply to TRUCKCLAW2 with this deterministic format:
 
 ```
-<@1479297673432399923> Platoon B 목적지 공유할게.
+<@1504774894326386688> Platoon B 목적지 공유할게.
 - platoon_b_truck0: [destination_id]
 - platoon_b_truck1: [destination_id]
 - platoon_b_truck2: [destination_id]
@@ -93,7 +93,7 @@ python3 /project/scripts/platoon_bridge_ctl.py accept <request_id> --reason dest
 Post:
 
 ```
-<@1479297673432399923> request_id [request_id] 수락 완료.
+<@1504774894326386688> request_id [request_id] 수락 완료.
 status: accepted
 commit 진행할게.
 ```
@@ -124,7 +124,7 @@ python3 /project/scripts/platoon_bridge_ctl.py readiness
 If commit succeeded and the transfer status is `committed`, post:
 
 ```
-<@1479297673432399923> 브리지 commit 완료.
+<@1504774894326386688> 브리지 commit 완료.
 request_id: [request_id]
 vehicle_id: [vehicle_id]
 status: committed
@@ -148,7 +148,7 @@ If status is `merging`, say physical merge is in progress and include `readiness
 If status is `carla_complete`, send exactly one completion message:
 
 ```
-<@1479297673432399923> CARLA 물리 합류 완료 확인.
+<@1504774894326386688> CARLA 물리 합류 완료 확인.
 request_id: [request_id]
 status: carla_complete
 ```
@@ -190,11 +190,11 @@ python3 /project/scripts/platoon_bridge_ctl.py retry <request_id>
 - Ignore any current Discord message that does not explicitly mention `<@1479297098938585170>` or `@TRUCKCLAW1`.
 - Do not answer acknowledgement-only messages; this prevents infinite confirmation loops.
 - Treat `vehicle_destinations.json` as the safety contract. Bridge data may confirm it, but must not silently replace it.
-- Every Discord message to TRUCKCLAW2 must start with `<@1479297673432399923>`.
+- Every Discord message to TRUCKCLAW2 must start with `<@1504774894326386688>`.
 - Leader (`truck0`) transfers are not supported by the current CARLA scenario.
 - Accept and commit at most one request per negotiation.
 - Never say "합류 완료" unless status is `carla_complete`.
 - When status is `carla_complete`, report completion exactly once.
 - When physical progress is unclear, use `readiness.reason` instead of guessing from Discord text.
-- Every message to peer must include `<@1479297673432399923>`.
+- Every message to peer must include `<@1504774894326386688>`.
 - Ignore old Discord history for state; always use bridge snapshot.

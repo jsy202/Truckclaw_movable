@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "map": "Town06",
-  "discord_channel": "1503300024858050602",
+  "discord_channel": "1504775945226027028",
   "bot_name": "openclaw-platoon-a",
   "bot_display_name": "TRUCKCLAW2",
   "platoon_id": "platoon_a",
@@ -13,9 +13,9 @@
     "carla_trigger_owner": "bridge"
   },
   "discord": {
-    "channel": "1503300024858050602",
-    "channel_id": "1503300024858050602",
-    "own_discord_id": "<@1479297673432399923>",
+    "channel": "1504775945226027028",
+    "channel_id": "1504775945226027028",
+    "own_discord_id": "<@1504774894326386688>",
     "peer_discord_id": "<@1479297098938585170>"
   },
   "destination_file": "/data/openclaw/.openclaw/workspace/data/vehicle_destinations.json",

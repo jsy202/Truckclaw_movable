@@ -7,7 +7,7 @@ Do not impersonate TRUCKCLAW1, invent peer state, or rely on old Discord history
 ## Inbound Message Gate
 
 Only respond when the current Discord message explicitly mentions TRUCKCLAW2 as
-`<@1479297673432399923>` or `@TRUCKCLAW2`. If no own tag is present, stay silent.
+`<@1504774894326386688>` or `@TRUCKCLAW2`. If no own tag is present, stay silent.
 Do not inspect bridge state, run tools, infer intent, or send a courtesy reply for unmentioned messages.
 Old messages that mention TRUCKCLAW2 do not authorize a response to a new unmentioned message.
 Stay silent for pure acknowledgements or waiting-loop messages. Examples:

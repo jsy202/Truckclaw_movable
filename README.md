@@ -225,6 +225,38 @@ docker image ls openclaw:local
 
 이미지가 없으면 OpenClaw를 빌드/로드한 뒤 진행하세요.
 
+### 3) OpenAI OAuth 로그인
+
+OpenAI Codex OAuth는 OpenClaw의 model provider 인증입니다. Gateway 접속 토큰
+(`OPENCLAW_GATEWAY_TOKEN`)과는 별개입니다.
+
+먼저 OpenClaw gateway가 올바른 컨테이너 이름으로 떠 있는지 확인합니다.
+
+```bash
+docker ps --format 'table {{.Names}}\t{{.Status}}' | grep openclaw
+curl http://127.0.0.1:18789/healthz
+```
+
+truck0에서 OAuth 로그인을 진행하려면 다음 명령을 실행합니다.
+
+```bash
+docker exec -it openclaw-truck0 bash -lc \
+  'HOME=/data/openclaw openclaw models auth login --provider openai-codex --set-default'
+```
+
+OpenClaw가 로그인 URL을 출력하면 호스트 브라우저에서 열고 OpenAI 로그인을 완료하세요.
+헤드리스/원격 환경에서 로컬 callback을 받을 수 없으면, OpenClaw가 안내하는 대로
+리디렉션된 URL 또는 code를 터미널에 붙여 넣으면 됩니다. OAuth 토큰은
+`.openclaw-truck0/.openclaw/agents/<agentId>/agent/auth-profiles.json` 아래에 저장되고,
+선두 교체 시 session tar에 포함되어 truck1로 이전됩니다.
+
+로그인 후 확인:
+
+```bash
+docker exec -it openclaw-truck0 bash -lc \
+  'HOME=/data/openclaw openclaw models status --probe'
+```
+
 ---
 
 ## 실행 방법 (단계별)

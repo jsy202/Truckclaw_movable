@@ -51,7 +51,7 @@ BLUEPRINT_PREFS = [
     'vehicle.mitsubishi.fusorosa',
     'vehicle.carlamotors.firetruck',
     'vehicle.mercedes.sprinter',
-    'vehicle.bmw.grandtourer',
+    'vehicle.carlamotors.carlacola',
 ]
 
 

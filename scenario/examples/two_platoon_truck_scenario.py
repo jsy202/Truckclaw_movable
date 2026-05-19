@@ -10,11 +10,11 @@ from enum import Enum, auto
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import glob
 
-try:
-    sys.path.append(glob.glob('/home/user/carla_source/PythonAPI/carla/dist/carla-*%d.%d-%s.egg' % (
-        sys.version_info.major, sys.version_info.minor, 'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
-except IndexError: pass
-sys.path.append('/home/user/carla_source/PythonAPI/carla')
+# try:
+#     sys.path.append(glob.glob('/home/user/carla_source/PythonAPI/carla/dist/carla-*%d.%d-%s.egg' % (
+#         sys.version_info.major, sys.version_info.minor, 'win-amd64' if os.name == 'nt' else 'linux-x86_64'))[0])
+# except IndexError: pass
+# sys.path.append('/home/user/carla_source/PythonAPI/carla')
 
 import carla
 import numpy as np
@@ -39,9 +39,9 @@ PLATOON_SPACING_M = float(_gaps.get("platoon_spacing_m", 18.0))
 NORMAL_FOLLOW_GAP_M = float(_gaps.get("normal_follow_gap_m", 12.0))
 OPEN_GAP_M = float(_gaps.get("open_gap_m", 20.0))
 OPEN_GAP_READY_M = float(_gaps.get("open_gap_ready_m", 18.0))
-SYNC_SPEED_KMH = float(_speeds.get("sync_speed_kmh", 18.0))
-APPROACH_FAST_KMH = float(_speeds.get("approach_fast_kmh", 38.0))
-MERGE_MIN_SPEED_KMH = float(_speeds.get("merge_min_speed_kmh", 15.0))
+SYNC_SPEED_KMH = 60.0                                   # ⚠️ 18 -> 60
+APPROACH_FAST_KMH = 80.0                                 # ⚠️ 38 -> 80
+MERGE_MIN_SPEED_KMH = 40.0
 TARGET_GAP_M = float(_gaps.get("target_gap_m", 13.0))
 FOLLOW_DIST_M = float(_gaps.get("follow_dist_m", 13.0))
 LANE_CENTER_TOLERANCE_M = 1.0 # Stricter for PID

@@ -8,7 +8,7 @@ description: Negotiate one safe vehicle transfer from Platoon A to Platoon B by 
 You are TRUCKCLAW2. You always start the current negotiation.
 
 Inbound gate: use this skill only when the current Discord message explicitly mentions
-TRUCKCLAW2 as `<@1479297673432399923>` or `@TRUCKCLAW2`. If no own tag is present, do not
+TRUCKCLAW2 as `<@1504774894326386688>` or `@TRUCKCLAW2`. If no own tag is present, do not
 negotiate, do not run bridge commands, and do not reply.
 First run `platoon_dialogue_guard.py inbound --agent platoon_a` on the current
 message. If it returns `allow_response: false`, stay silent.
@@ -181,7 +181,7 @@ python3 /project/scripts/platoon_bridge_ctl.py retry <request_id>
 ## Rules
 
 - Step 2 is always first in a fresh dialogue.
-- Ignore any current Discord message that does not explicitly mention `<@1479297673432399923>` or `@TRUCKCLAW2`.
+- Ignore any current Discord message that does not explicitly mention `<@1504774894326386688>` or `@TRUCKCLAW2`.
 - Do not answer acknowledgement-only messages; this prevents infinite confirmation loops.
 - Treat `vehicle_destinations.json` as the safety contract. Bridge data may confirm it, but must not silently replace it.
 - Every Discord message to TRUCKCLAW1 must start with `<@1479297098938585170>`.

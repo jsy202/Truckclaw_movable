@@ -31,9 +31,9 @@ override it. Reject once with a mismatch reason and stop.
 Keep bot-to-bot messages natural, short, and deterministic.
 Use Korean operational language, but include exact machine-readable fields:
 `vehicle_id`, `destination_id`, `request_id`, and `status` when relevant.
-Every peer-facing message must mention TRUCKCLAW2 with `<@1479297673432399923>`.
+Every peer-facing message must mention TRUCKCLAW2 with `<@1504774894326386688>`.
 For every Discord reply addressed to the peer, the first token of the message must be
-`<@1479297673432399923>`. If you cannot include that exact mention, do not send the
+`<@1504774894326386688>`. If you cannot include that exact mention, do not send the
 peer-facing message.
 
 ## Role: Responder

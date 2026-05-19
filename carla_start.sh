@@ -70,7 +70,7 @@ log "마우스 캡처 해제 중..."
 
 # Town06 로드
 log "Town06 맵 로드 중..."
-PYTHONPATH="$PYAPI" python3.7 -c "
+PYTHONPATH="$PYAPI" python3 -c "
 import carla, time
 client = carla.Client('localhost', $CARLA_PORT)
 client.set_timeout(30.0)
@@ -103,3 +103,4 @@ echo -e "  종료:   ${CYAN}pkill -f CarlaUE4-Linux-Shipping${NC}"
 echo -e "  시나리오: ${CYAN}./run_truckclaw.sh${NC}"
 echo -e "  마우스:  CARLA 창 클릭 시 ${YELLOW}Alt+Tab${NC} 으로 포커스 전환"
 echo -e "${BOLD}════════════════════════════════════════════${NC}"
+═════════════════════════════════════════${NC}"

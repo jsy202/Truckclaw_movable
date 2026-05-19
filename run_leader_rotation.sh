@@ -7,8 +7,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CARLA_PORT=2000
 BRIDGE_PORT=18801
 LEADER_ROT_PORT=18803
-PYAPI="/opt/carla-0.9.6/PythonAPI/carla/dist/carla-0.9.6-py3.5-linux-x86_64.egg"
-PYAPI_DIR="/opt/carla-0.9.6/PythonAPI/carla"
+PYAPI=""
+PYAPI_DIR="/home/user/carla_source/PythonAPI/carla"
 ENV_FILE="$SCRIPT_DIR/.env"
 
 GREEN='\033[0;32m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; BOLD='\033[1m'; NC='\033[0m'
