@@ -316,12 +316,12 @@ class Handler(BaseHTTPRequestHandler):
                     "updated_at": _now(),
                 })
                 if status == "started":
-                    # 브리지 논리 상태: 선두 교체 반영
-                    _promote_new_leader(f"platoon_a_{old_l}")
-                    # CARLA 18803 트리거
+                    # CARLA 18803 트리거 (논리 상태는 물리 합류 완료 후 반영)
                     _notify_carla_leader_rotation(old_l, new_l)
                     print(f"[bridge] leader_rotation 시작: {old_l} → {new_l}")
                 elif status == "complete":
+                    # 브리지 논리 상태: 물리 후미 합류 완료 시점에 선두 교체 반영
+                    _promote_new_leader(f"platoon_a_{old_l}")
                     _leader_rotation["status"] = "complete"
                     print(f"[bridge] leader_rotation 완료: {new_l} 신규 선두")
                 self._ok(_leader_rotation)
