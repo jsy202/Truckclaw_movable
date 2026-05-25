@@ -121,7 +121,6 @@ def test_coordinator_advances_to_gap_after_successful_migration(scenario, replic
     assert ("/leader_rotation", START) in scenario._test_posts
 
 
-@pytest.mark.xfail(strict=True, reason="DEF-M07: failed migration leaves the coordinator in MIGRATE forever (wait() is False for both 'running' and 'failed')")
 def test_coordinator_leaves_migrate_when_migration_fails(scenario, replicator, migrator_dirs, fake_docker):
     # REQ: when agent migration fails, no physical rotation may start, and the
     # coordinator must not wait in MIGRATE forever; the failure is reported to the bridge.
@@ -132,11 +131,10 @@ def test_coordinator_leaves_migrate_when_migration_fails(scenario, replicator, m
     assert ("/leader_rotation", {**START, "status": "failed"}) in scenario._test_posts
 
 
-@pytest.mark.xfail(strict=True, reason="DEF-M08: no MIGRATE timeout; a hung docker call blocks the rotation forever")
 def test_coordinator_times_out_hung_migration(scenario, replicator, migrator_dirs, fake_docker, monkeypatch):
     # REQ: a migration that never finishes must not block the rotation forever.
-    # MIGRATE_TIMEOUT_S is the proposed knob (default = LeaderMigrator.wait's existing 120 s).
-    monkeypatch.setattr(scenario, "MIGRATE_TIMEOUT_S", 0.3, raising=False)
+    # MIGRATE_TIMEOUT_S defaults to LeaderMigrator.wait()'s existing 120 s; shortened for the test.
+    monkeypatch.setattr(scenario, "MIGRATE_TIMEOUT_S", 0.3)
     fake_docker.hang("save", seconds=3.0)
     coord = _coordinator(scenario, _migrator(replicator, migrator_dirs))
     _pump(coord, 1.5)

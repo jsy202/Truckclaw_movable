@@ -419,6 +419,10 @@ class LeaderMigrator:
         """완료 대기. 성공 여부 반환."""
         return self._done_event.wait(timeout=timeout) and self._success
 
+    def finished(self) -> bool:
+        """이전 작업 종료 여부 (성공/실패 무관). 성공 여부는 wait(timeout=0)."""
+        return self._done_event.is_set()
+
     def cleanup_old(self):
         """CARLA 합류 완료 후 호출: 구 선두 openclaw 컨테이너 삭제."""
         delete_old_openclaw(self.old_container)

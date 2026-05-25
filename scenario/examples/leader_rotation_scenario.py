@@ -61,6 +61,7 @@ TARGET_GAP_M        = 13.0
 PLATOON_SPACING_M   = 20.0                                   # ⚠️ 18 -> 20
 LANE_STEP_COMPLETE_M = 0.9
 GAP_STABLE_TICKS    = 10                                     # ⚠️ 50 -> 10 (빠른 전환)
+MIGRATE_TIMEOUT_S   = 120.0                                  # LeaderMigrator.wait() 기본값과 동일
 
 BRIDGE_URL      = "http://127.0.0.1:18801"
 TRIGGER_PORT    = 18802
@@ -316,6 +317,10 @@ class LeaderRotationCoordinator:
                 self.state = RotState.GAP
             elif self.migrator is None:
                 self.state = RotState.GAP
+            elif self.migrator.finished():
+                self._abort_migration("OpenClaw 이전 실패")
+            elif time.monotonic() - self._migrate_started > MIGRATE_TIMEOUT_S:
+                self._abort_migration(f"OpenClaw 이전 {MIGRATE_TIMEOUT_S:g}s 초과")
         elif self.state == RotState.GAP:    self._update_gap()
         elif self.state == RotState.LC:     self._update_lc()
         elif self.state == RotState.SLOWDOWN: self._update_slowdown()
@@ -326,11 +331,20 @@ class LeaderRotationCoordinator:
         _bridge_post("/leader_rotation", {"old_leader":"truck0","new_leader":"truck1","status":"started"})
         
         if self.migrator:
+            self._migrate_started = time.monotonic()
             self.migrator.migrate(blocking=False)
             self.state = RotState.MIGRATE
         else:
             print("[rotation] migrator 없음 — OpenClaw 이전 스킵")
             self.state = RotState.GAP
+
+    def _abort_migration(self, reason):
+        # 물리 이동 전(MIGRATE)이므로 truck0가 그대로 선두 — CRUISE로 복귀하고 실패를 브리지에 보고
+        print(f"[rotation] {reason} → 선두 교체 중단 (truck0 선두 유지)")
+        _bridge_post("/leader_rotation", {"old_leader":"truck0","new_leader":"truck1","status":"failed"})
+        self.triggered = False
+        self.state = RotState.CRUISE
+        self.last_status = reason
 
     def _update_gap(self):
         if self._v is None:
