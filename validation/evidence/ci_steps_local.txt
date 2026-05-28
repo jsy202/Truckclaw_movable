@@ -1,0 +1,4 @@
+# Local reproduction of CI steps, 2026-10-01, code at 05e1b5a
+compileall: ok
+4 passed in 0.01s
+18 passed, 1 xfailed in 4.53s

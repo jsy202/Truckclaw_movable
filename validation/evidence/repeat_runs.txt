@@ -1,0 +1,11 @@
+# 10 consecutive full-suite runs (Python 3.10.12, pytest 8.4.2), 2026-10-01, code at 05e1b5a
+22 passed, 1 xfailed in 5.03s
+22 passed, 1 xfailed in 5.03s
+22 passed, 1 xfailed in 5.03s
+22 passed, 1 xfailed in 5.03s
+22 passed, 1 xfailed in 5.03s
+22 passed, 1 xfailed in 5.02s
+22 passed, 1 xfailed in 5.03s
+22 passed, 1 xfailed in 5.03s
+22 passed, 1 xfailed in 5.03s
+22 passed, 1 xfailed in 5.03s

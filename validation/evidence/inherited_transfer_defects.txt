@@ -1,0 +1,24 @@
+# Inherited bridge transfer defects — cross-repository check (2026-10-01)
+#
+# Method: Truckclaw-improve's regression tests at commit 53dafd0 (tests/ + pytest.ini,
+# the strict-xfail defect suite) were run unchanged against THIS repository's
+# research-baseline bridge (c56d794: bridge/platoon_bridge_server.py), Python 3.10.12, pytest 8.4.2.
+#
+# Normal run:        1 passed, 11 xfailed
+# --runxfail run:    11 failed, 1 passed   (all 11 defects reproduce)
+#
+# Reproduced here (same IDs as Truckclaw-improve):
+# DEF-01 unknown vehicle accepted          DEF-02 unknown platoon -> connection dropped
+# DEF-03 commit without accept             DEF-04 duplicate commit re-triggers CARLA
+# DEF-05 carla_complete from pending       DEF-06 completed transfer regresses
+# DEF-07 /failed unknown id -> no response DEF-08 non-object JSON -> handler crash
+# DEF-09 trigger failure not on transfer   DEF-10 platoon locked after trigger failure
+# DEF-11 no transfer timeout
+#
+# Status in this repository: NOT FIXED (DEFERRED).
+# Reason: this repository's validation scope is leader rotation / agent migration
+# (movable) or split / replication (copyable). This repo's own scenario
+# (leader_rotation_scenario.py / single_platoon_branch_scenario.py) does not call /transfers;
+# the inherited two_platoon_truck_scenario.py still does.
+# The fixes exist as separate commits in Truckclaw-improve (d534709..319b49f) and
+# can be ported if the transfer path is used here.
