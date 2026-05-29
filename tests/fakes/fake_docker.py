@@ -45,6 +45,8 @@ class FakeDocker:
         if sub in self._hang:
             time.sleep(self._hang[sub])
         if sub in self._fail:
+            if kwargs.get("check"):  # mirror subprocess.run(check=True)
+                raise subprocess.CalledProcessError(1, cmd, output="", stderr=self._fail[sub])
             return subprocess.CompletedProcess(cmd, 1, stdout="", stderr=self._fail[sub])
         if sub == "save" and "-o" in cmd:
             # emulate an image archive so later size/stat calls work
