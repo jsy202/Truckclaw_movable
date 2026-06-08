@@ -102,7 +102,10 @@ def evaluate_leader(initial, events, final):
     slowdown = _first(events, "slowdown_complete")
     rejoin = _first(events, "rejoin")
     done = _first(events, "done")
-    lanes = {(actors_f.get(n, {}).get("road_id"), actors_f.get(n, {}).get("lane_id")) for n in TRUCKS}
+    # CARLA road_id identifies OpenDRIVE road segments, not a whole continuous
+    # lane corridor. A 35 m platoon can straddle a segment boundary while all
+    # actors occupy lane -3, as observed in the pre-fix real-CARLA smoke run.
+    lanes = {actors_f.get(n, {}).get("lane_id") for n in TRUCKS}
     checks = {
         "initial_state": initial.get("scenario_state") == "CRUISE"
         and initial.get("main_members") == list(TRUCKS)
@@ -132,7 +135,7 @@ def evaluate_leader(initial, events, final):
         and all(controllers_f.get(n, {}).get("platoon") == "main" for n in TRUCKS),
         "actors_alive": set(actors_f) == set(TRUCKS) and all(actors_f[n].get("alive") for n in TRUCKS),
         "vehicles_moving": all(actors_f.get(n, {}).get("speed_kmh", 0) > 0 for n in TRUCKS),
-        "same_final_lane": len(lanes) == 1 and None not in next(iter(lanes), (None, None)),
+        "same_final_lane": len(lanes) == 1 and None not in lanes,
         "physical_order": final.get("physical_order") == ["truck1", "truck2", "truck0"],
         "collision_free": final.get("collisions") == [],
         "done": final.get("scenario_state") == "DONE" and done is not None,
