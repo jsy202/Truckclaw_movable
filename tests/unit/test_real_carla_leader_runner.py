@@ -1,8 +1,10 @@
 import csv
 import json
+import os
 import socket
 import subprocess
 import sys
+import time
 
 import pytest
 
@@ -29,6 +31,15 @@ def test_owned_process_group_is_stopped():
     process = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"], start_new_session=True)
     stop_process(process, timeout=1.0)
     assert process.poll() is not None
+
+
+def test_owned_child_is_killed_after_wrapper_exits_on_term():
+    child = "import signal,time;signal.signal(signal.SIGTERM,signal.SIG_IGN);time.sleep(60)"
+    process = subprocess.Popen(["/bin/sh", "-c", "{} -c '{}' & wait".format(sys.executable, child)], start_new_session=True)
+    time.sleep(0.1)
+    stop_process(process, timeout=0.2)
+    with pytest.raises(ProcessLookupError):
+        os.killpg(process.pid, 0)
 
 
 def test_failure_is_recorded_and_later_runs_continue(tmp_path):
