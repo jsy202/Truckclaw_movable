@@ -738,6 +738,58 @@ CI는 `.github/workflows/test.yml`에 있다. 아직 push하지 않아 **GitHub�
 
 ---
 
+## Real CARLA 50-Run Leader Change Physical Validation (2026-10-03)
+
+동일한 고정 CARLA 조건에서 50회 반복 실행해 50/50 완료 및 logical/physical state consistency 50/50을 확인했다.
+
+### 검증 결과 요약
+
+| 지표 | 결과 | 비고 |
+|---|---:|---|
+| Real CARLA Runs | 50 | 독립 CARLA 서버 프로세스 그룹 격리 실행 |
+| 물리 선두 교체 완료 (PASS) | 50/50 | timeout 0, crash 0, cleanup failure 0 |
+| Final order correct | 50/50 | CARLA 공간 위치 기준 `[truck1, truck2, truck0]` 순서 검증 |
+| Logical / physical consistency | 50/50 | 선두 컨트롤러 승계 및 최종 대열 구성 일치 |
+| OpenClaw Migration | Not tested | 이미지 및 Discord 게이트웨이 환경 부재로 미검증 |
+| Duplicate trigger | 0 | 0건 (트리거 멱등 처리로 50회 모두 유효 트리거 1회) |
+
+- **주요 타이밍 (raw evidence 기반 평균/중앙값/최대값)**:
+  - `trigger → migrate`: mean 0.003606 s / p50 0.003538 s / p95 0.003976 s / max 0.005020 s
+  - `trigger → split` (logical_transition): mean 0.010610 s / p50 0.010270 s / p95 0.012122 s / max 0.013104 s
+  - `trigger → lane_change`: mean 1.215890 s / p50 1.208961 s / p95 1.369022 s / max 1.402861 s
+  - `trigger → slowdown`: mean 8.267754 s / p50 8.226030 s / p95 8.959305 s / max 9.635556 s
+  - `trigger → rejoin`: mean 9.869590 s / p50 9.796522 s / p95 10.648178 s / max 11.605610 s
+  - `trigger → done`: mean 9.871707 s / p50 9.798514 s / p95 10.650220 s / max 11.608280 s
+
+### Defect 및 수정 (VAL-L01)
+
+- **결함 증상**: 초기 smoke run에서 선두 교체 및 재합류 매뉴버는 정상 완주했으나, 플래툰이 OpenDRIVE 세그먼트 경계(road 36 vs 1149)를 가로지를 때 동일 직선 차선(lane -3)임에도 evaluator가 차선 불일치로 오인하여 실패 판정.
+- **수정**: evaluator의 `same_final_lane` 검사를 CARLA `lane_id` 비교와 물리적 횡방향 오차(< 0.8m) 및 종방향 ordering 검증으로 정밀화 (`evidence_before_fix/`에 원본 보존).
+- **회귀 검증**: `test_same_lane_across_connected_road_segments_is_not_rejected` 통과 후 본 50회 검증에서 50/50 완료 확인.
+
+### Comparison with Transfer / Split
+
+| Scenario | Repository | Real CARLA Runs | Verification |
+|---|---|---:|---|
+| Transfer | Truckclaw-improve | 10 | request → physical merge → logical membership |
+| Split | Truckclaw_copyable | 50 | logical detach → physical separation → independent driving |
+| Leader Change | Truckclaw_movable | 50 | leader/controller transition → physical maneuver → old leader rejoin |
+
+### Limitations
+
+- **Fixed condition**: 고정된 CARLA 조건(Town06 고정 스폰, 단일 목표 속도, 단일 날씨)에서만 실행되었습니다.
+- **Single scenario configuration**: 3대 플래툰 단일 설정입니다.
+- **CARLA simulation**: CARLA 0.9.13 시뮬레이션 환경 검증이며 실차 검증이 아닙니다.
+- **Off-screen rendering**: `-RenderOffScreen` 모드 시뮬레이션입니다.
+- **carlacola fallback**: `vehicle.carlamotors.carlacola` 모델을 사용했습니다.
+- **OpenClaw Migration Not tested**: 환경 부재로 미검증되었습니다.
+- **Generalization 미검증**: 다양한 환경에 대한 일반화는 검증되지 않았습니다.
+- CARLA-free 회귀 테스트 결과(기존 22 passed + 1 known gateway-health xfail)는 실제 CARLA 50회 실행 통계와 별개입니다.
+
+상세 보고서: [validation/real_carla_50runs/validation_report.md](validation/real_carla_50runs/validation_report.md)
+
+---
+
 ## 라이선스
 
 [LICENSE](scenario/LICENSE) 참고

@@ -1,0 +1,14 @@
+{
+  "base_commit": "2afe22213b9a7c69f5fe11a1dc2f73920fcd1f64",
+  "captured_at": "2026-10-03T16:55:27+0900",
+  "carla": "0.9.13",
+  "dt_s": 0.01,
+  "map": "Town06",
+  "no_rendering_mode": false,
+  "openclaw_migration": "Not tested",
+  "python_runner": "3.10.12",
+  "python_scenario": "3.7.17",
+  "rendering": "-RenderOffScreen -quality-level=Low",
+  "runner_owns_carla": false,
+  "vehicle_blueprint": "vehicle.carlamotors.carlacola"
+}
