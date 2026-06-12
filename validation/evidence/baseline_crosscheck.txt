@@ -1,4 +1,4 @@
-# Current tests (code at 05e1b5a) run with --runxfail against research-baseline (59f35ea) sources, 2026-10-01
+# Current tests (code at 05e1b5a) run with --runxfail against research-baseline (59f35ea) sources
 FAILED tests/integration/test_agent_migration.py::test_migration_success_requires_new_agent_ready
 FAILED tests/integration/test_leader_rotation.py::test_leader_not_promoted_before_physical_rotation_completes
 FAILED tests/integration/test_leader_rotation.py::test_failed_rotation_keeps_original_leader

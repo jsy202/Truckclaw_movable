@@ -1,4 +1,4 @@
-# Inherited bridge transfer defects — cross-repository check (2026-10-01)
+# Inherited bridge transfer defects — cross-repository check
 #
 # Method: Truckclaw-improve's regression tests at commit 53dafd0 (tests/ + pytest.ini,
 # the strict-xfail defect suite) were run unchanged against THIS repository's

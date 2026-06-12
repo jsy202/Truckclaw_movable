@@ -1,6 +1,6 @@
 # Requirements — Truckclaw_movable (Leader Rotation / Agent Migration)
 
-> 연구 종료 후(2026-10) 수행한 Post-project Validation 산출물이다. 연구 당시 요구사항 문서는 없었다.
+> 연구 종료 후 수행한 Post-project Validation 산출물이다. 연구 당시 요구사항 문서는 없었다.
 > 아래 항목은 현재 코드와 README에서 근거를 찾아 정리한 것이다.
 >
 > - 출처: **Existing** = README/코드에 명시됨, **Derived** = 기존 설계에서 도출됨, **Proposed** = 이번에 새로 제안함

@@ -1,6 +1,6 @@
 # Test Report — Truckclaw_movable (Post-project Validation)
 
-> 연구 종료 후(2026-10-01) 수행한 검증이다. 연구 당시의 CARLA·Docker 선두 교체 시연은 이번에 재실행하지 않았다.
+> 연구 종료 후 수행한 검증이다. 연구 당시의 CARLA·Docker 선두 교체 시연은 이번에 재실행하지 않았다.
 
 ## 환경
 

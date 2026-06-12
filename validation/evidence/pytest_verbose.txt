@@ -1,4 +1,4 @@
-# python3 -m pytest -v  2026-10-01T22:07:31+09:00 code at 05e1b5a
+# python3 -m pytest -v code at 05e1b5a
 tests/integration/test_agent_migration.py::test_successful_migration_restores_session_and_starts_new_container PASSED [  4%]
 tests/integration/test_agent_migration.py::test_session_tar_contains_agent_config_state_and_token_meta PASSED [  8%]
 tests/integration/test_agent_migration.py::test_v2v_transfer_is_byte_identical PASSED [ 13%]

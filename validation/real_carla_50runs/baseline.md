@@ -1,6 +1,6 @@
 # Validation Branch Baseline
 
-Captured before creating `validation-carla-50runs` on 2026-10-03 (Asia/Seoul).
+Captured before creating `validation-carla-50runs`.
 
 | Item | Value |
 |---|---|
