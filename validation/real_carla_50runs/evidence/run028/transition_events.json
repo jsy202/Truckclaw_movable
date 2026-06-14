@@ -1,0 +1,127 @@
+[
+  {
+    "accepted": true,
+    "detached_members": [],
+    "event": "trigger",
+    "leader": "truck0",
+    "main_members": [
+      "truck0",
+      "truck1",
+      "truck2"
+    ],
+    "scenario_state": "CRUISE",
+    "simulation_time_s": 5.45,
+    "since_trigger_s": 0.0,
+    "wall_monotonic_s": 5642.042840833
+  },
+  {
+    "detached_members": [],
+    "event": "migrate",
+    "leader": "truck0",
+    "main_members": [
+      "truck0",
+      "truck1",
+      "truck2"
+    ],
+    "scenario_state": "CRUISE",
+    "simulation_time_s": 5.45,
+    "since_trigger_s": 0.003453,
+    "wall_monotonic_s": 5642.046293945
+  },
+  {
+    "detached_members": [
+      "truck0"
+    ],
+    "event": "logical_transition",
+    "leader": "truck1",
+    "main_members": [
+      "truck1",
+      "truck2"
+    ],
+    "scenario_state": "GAP",
+    "simulation_time_s": 5.46,
+    "since_trigger_s": 0.010806,
+    "wall_monotonic_s": 5642.053647111
+  },
+  {
+    "detached_members": [
+      "truck0"
+    ],
+    "event": "gap_ready",
+    "gap_m": 18.086782455444336,
+    "leader": "truck1",
+    "main_members": [
+      "truck1",
+      "truck2"
+    ],
+    "scenario_state": "GAP",
+    "simulation_time_s": 5.5600000000000005,
+    "since_trigger_s": 0.046935,
+    "stable_ticks": 10,
+    "wall_monotonic_s": 5642.089776303
+  },
+  {
+    "detached_members": [
+      "truck0"
+    ],
+    "event": "lane_change_complete",
+    "forced": false,
+    "lateral_m": 3.001289869267114,
+    "leader": "truck1",
+    "main_members": [
+      "truck1",
+      "truck2"
+    ],
+    "scenario_state": "SLOWDOWN",
+    "simulation_time_s": 8.23,
+    "since_trigger_s": 1.256755,
+    "wall_monotonic_s": 5643.299596264
+  },
+  {
+    "behind_tail_m": 25.027607032029994,
+    "detached_members": [
+      "truck0"
+    ],
+    "event": "slowdown_complete",
+    "forced": false,
+    "leader": "truck1",
+    "main_members": [
+      "truck1",
+      "truck2"
+    ],
+    "scenario_state": "SLOWDOWN",
+    "simulation_time_s": 25.84,
+    "since_trigger_s": 8.493998,
+    "wall_monotonic_s": 5650.536838845
+  },
+  {
+    "detached_members": [
+      "truck0"
+    ],
+    "event": "rejoin",
+    "lateral_m": 0.7965871228950764,
+    "leader": "truck1",
+    "main_members": [
+      "truck1",
+      "truck2"
+    ],
+    "scenario_state": "REJOIN",
+    "simulation_time_s": 29.72,
+    "since_trigger_s": 10.0088,
+    "wall_monotonic_s": 5652.051640643
+  },
+  {
+    "detached_members": [],
+    "event": "done",
+    "leader": "truck1",
+    "main_members": [
+      "truck1",
+      "truck2",
+      "truck0"
+    ],
+    "scenario_state": "DONE",
+    "simulation_time_s": 29.72,
+    "since_trigger_s": 10.0107,
+    "wall_monotonic_s": 5652.053541101
+  }
+]

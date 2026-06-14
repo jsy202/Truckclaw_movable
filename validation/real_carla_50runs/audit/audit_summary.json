@@ -1,0 +1,151 @@
+{
+  "audited_fail_runs": {},
+  "audited_pass": 50,
+  "bridge_trigger_echoes_per_run": [
+    1
+  ],
+  "cleanup_failures": 0,
+  "crashes": 0,
+  "csv": {
+    "failures_csv_runs": [],
+    "runs_summary_rows": 50,
+    "runs_summary_vs_result_json_mismatches": [],
+    "timing_summary_rows": 50,
+    "timing_summary_vs_raw_events_mismatches": []
+  },
+  "duplicate_accepted_triggers": 0,
+  "evidence_integrity_issues": [],
+  "max_rejoin_lateral_m": 0.7999448027530363,
+  "min_behind_tail_m": 25.000024596625916,
+  "min_lane_change_lateral_m": 3.000054843869913,
+  "ports_now": {
+    "18801": "free",
+    "18802": "free",
+    "18803": "free",
+    "2000": "free",
+    "2001": "free"
+  },
+  "result_json_parsed": 50,
+  "result_json_timing_vs_raw_event_mismatches": [],
+  "root": "/home/jsy202/validation-work/Truckclaw_movable/.worktrees/validation-carla-50runs/validation/real_carla_50runs",
+  "run_dirs_found": 50,
+  "runner_reported_pass": 50,
+  "runner_vs_audit_verdict_mismatch_runs": [],
+  "scenario": "Leader Change",
+  "timeouts": 0,
+  "timing_all_runs": {
+    "trigger_to_done_s": {
+      "max": 11.60828,
+      "mean": 9.871707,
+      "min": 9.146655,
+      "n": 50,
+      "p50": 9.798514,
+      "p95_linear": 10.60757,
+      "p95_nearest_rank": 10.65022
+    },
+    "trigger_to_lane_change_s": {
+      "max": 1.402861,
+      "mean": 1.21589,
+      "min": 1.070818,
+      "n": 50,
+      "p50": 1.208961,
+      "p95_linear": 1.350247,
+      "p95_nearest_rank": 1.369022
+    },
+    "trigger_to_migrate_s": {
+      "max": 0.00502,
+      "mean": 0.003606,
+      "min": 0.003212,
+      "n": 50,
+      "p50": 0.003538,
+      "p95_linear": 0.003929,
+      "p95_nearest_rank": 0.003976
+    },
+    "trigger_to_rejoin_s": {
+      "max": 11.60561,
+      "mean": 9.86959,
+      "min": 9.144819,
+      "n": 50,
+      "p50": 9.796522,
+      "p95_linear": 10.605343,
+      "p95_nearest_rank": 10.648178
+    },
+    "trigger_to_slowdown_s": {
+      "max": 9.635556,
+      "mean": 8.267754,
+      "min": 7.685227,
+      "n": 50,
+      "p50": 8.22603,
+      "p95_linear": 8.883912,
+      "p95_nearest_rank": 8.959305
+    },
+    "trigger_to_split_s": {
+      "max": 0.013104,
+      "mean": 0.01061,
+      "min": 0.00932,
+      "n": 50,
+      "p50": 0.01027,
+      "p95_linear": 0.012073,
+      "p95_nearest_rank": 0.012122
+    }
+  },
+  "timing_audited_pass_runs": {
+    "trigger_to_done_s": {
+      "max": 11.60828,
+      "mean": 9.871707,
+      "min": 9.146655,
+      "n": 50,
+      "p50": 9.798514,
+      "p95_linear": 10.60757,
+      "p95_nearest_rank": 10.65022
+    },
+    "trigger_to_lane_change_s": {
+      "max": 1.402861,
+      "mean": 1.21589,
+      "min": 1.070818,
+      "n": 50,
+      "p50": 1.208961,
+      "p95_linear": 1.350247,
+      "p95_nearest_rank": 1.369022
+    },
+    "trigger_to_migrate_s": {
+      "max": 0.00502,
+      "mean": 0.003606,
+      "min": 0.003212,
+      "n": 50,
+      "p50": 0.003538,
+      "p95_linear": 0.003929,
+      "p95_nearest_rank": 0.003976
+    },
+    "trigger_to_rejoin_s": {
+      "max": 11.60561,
+      "mean": 9.86959,
+      "min": 9.144819,
+      "n": 50,
+      "p50": 9.796522,
+      "p95_linear": 10.605343,
+      "p95_nearest_rank": 10.648178
+    },
+    "trigger_to_slowdown_s": {
+      "max": 9.635556,
+      "mean": 8.267754,
+      "min": 7.685227,
+      "n": 50,
+      "p50": 8.22603,
+      "p95_linear": 8.883912,
+      "p95_nearest_rank": 8.959305
+    },
+    "trigger_to_split_s": {
+      "max": 0.013104,
+      "mean": 0.01061,
+      "min": 0.00932,
+      "n": 50,
+      "p50": 0.01027,
+      "p95_linear": 0.012073,
+      "p95_nearest_rank": 0.012122
+    }
+  },
+  "trigger_http_receipts_per_run": [
+    2
+  ]
+}

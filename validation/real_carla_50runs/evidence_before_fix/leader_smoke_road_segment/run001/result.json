@@ -1,0 +1,37 @@
+{
+  "checks": {
+    "actors_alive": true,
+    "collision_free": true,
+    "controller_references": true,
+    "done": true,
+    "gap_ready": true,
+    "initial_state": true,
+    "lane_departure": true,
+    "logical_membership": true,
+    "logical_transition": true,
+    "no_forced_transition": true,
+    "physical_order": true,
+    "rear_position": true,
+    "rejoin": true,
+    "same_final_lane": false,
+    "single_trigger": true,
+    "vehicles_moving": true
+  },
+  "cleanup_failure": false,
+  "crash": false,
+  "failure_reasons": [
+    "same_final_lane"
+  ],
+  "passed": false,
+  "run": 1,
+  "timeout": false,
+  "timings": {
+    "ready_to_trigger_s": 0.12567,
+    "trigger_to_done_s": 10.993749,
+    "trigger_to_lane_change_s": 1.659829,
+    "trigger_to_migrate_s": 0.003678,
+    "trigger_to_rejoin_s": 10.991555,
+    "trigger_to_slowdown_s": 9.463903,
+    "trigger_to_split_s": 0.010473
+  }
+}
