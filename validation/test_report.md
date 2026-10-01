@@ -25,6 +25,8 @@ baseline은 `research-baseline` = `59f35ea`(GitHub main 최신)이다.
 | DEF-M06: 식별자 검증 (+ 순서 테스트 1건) | `35bd68e` | 16 passed, 3 xfailed |
 | DEF-M07, M08: MIGRATE 실패/timeout 탈출 | `89237fd` | 18 passed, 1 xfailed |
 | unit 4건 + CI | `05e1b5a` | 22 passed, 1 xfailed |
+| validation 문서 + README | `86228a1` | – |
+| FakeDocker가 `check=True`를 흉내 내도록 수정 (테스트 도구 충실도, 이 저장소의 결과 변화 없음) | `482cef6` | 22 passed, 1 xfailed |
 
 ## Baseline 교차 검증
 
