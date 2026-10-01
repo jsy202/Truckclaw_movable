@@ -314,6 +314,14 @@ class Handler(BaseHTTPRequestHandler):
                     return self._err(400, f"unknown leader_rotation status: {status}")
                 if status == "started" and current == "started":
                     return self._ok(_leader_rotation)  # 진행 중 재요청: 멱등 (CARLA 재트리거 없음)
+                if status == "started":
+                    # 식별자 검증: old_leader = 현재 선두, new_leader = 바로 다음 차량 (_promote_new_leader 의미와 동일)
+                    ids = [m["vehicle_id"] for m in _platoons.get("platoon_a", {}).get("members", [])]
+                    old_vid, new_vid = f"platoon_a_{old_l}", f"platoon_a_{new_l}"
+                    if old_vid not in ids or new_vid not in ids:
+                        return self._err(404, f"unknown vehicle in leader_rotation: {old_l} -> {new_l}")
+                    if ids[0] != old_vid or len(ids) < 2 or ids[1] != new_vid:
+                        return self._err(409, f"{old_l} is not the current leader or {new_l} is not next in line")
                 if status in ("complete", "failed") and current != "started":
                     return self._err(409, f"cannot mark leader_rotation {status}: current status is {current}")
                 _leader_rotation.update({

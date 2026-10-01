@@ -66,7 +66,6 @@ def test_rejects_unknown_rotation_status(client, rotation_receiver):
     assert status == 400
 
 
-@pytest.mark.xfail(strict=True, reason="DEF-M06: unknown old_leader is accepted and CARLA is triggered")
 def test_rejects_unknown_leader_identity(client, rotation_receiver):
     # REQ: old_leader must be the current leader of platoon_a and new_leader its next member.
     status, _ = client.post("/leader_rotation", {"old_leader": "truck9", "new_leader": "truck1", "status": "started"})
@@ -143,3 +142,9 @@ def test_coordinator_times_out_hung_migration(scenario, replicator, migrator_dir
     _pump(coord, 1.5)
     assert coord.state.name == "CRUISE"
     assert ("/leader_rotation", {**START, "status": "failed"}) in scenario._test_posts
+
+
+def test_rejects_rotation_when_new_leader_is_not_next_in_line(client, rotation_receiver):
+    status, _ = client.post("/leader_rotation", {"old_leader": "truck0", "new_leader": "truck2", "status": "started"})
+    assert status == 409
+    assert rotation_receiver.count() == 0
