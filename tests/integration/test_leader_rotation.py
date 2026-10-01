@@ -31,14 +31,12 @@ def test_rotation_start_and_complete_end_with_truck1_leading(client, rotation_re
 
 # ── bridge: defects ──────────────────────────────────────────────────────────
 
-@pytest.mark.xfail(strict=True, reason="DEF-M01: bridge promotes truck1 to leader as soon as 'started' is posted, before any physical move")
 def test_leader_not_promoted_before_physical_rotation_completes(client, rotation_receiver):
     # REQ: logical leader changes only after the physical rotation is reported complete.
     client.post("/leader_rotation", START)
     assert client.members() == ORIGINAL
 
 
-@pytest.mark.xfail(strict=True, reason="DEF-M02: after started -> failed the bridge still reports truck1 as leader (promotion is never undone)")
 def test_failed_rotation_keeps_original_leader(client, rotation_receiver):
     # REQ: a rotation that fails must not leave the bridge with a promoted leader
     # while truck0 still physically leads.
