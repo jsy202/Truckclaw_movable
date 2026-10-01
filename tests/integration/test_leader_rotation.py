@@ -45,7 +45,6 @@ def test_failed_rotation_keeps_original_leader(client, rotation_receiver):
     assert client.members() == ORIGINAL
 
 
-@pytest.mark.xfail(strict=True, reason="DEF-M03: a second 'started' sends a second CARLA :18803 trigger")
 def test_duplicate_rotation_start_does_not_retrigger_carla(client, rotation_receiver):
     # REQ: one rotation = one CARLA trigger; a repeated 'started' while in progress is idempotent.
     client.post("/leader_rotation", START)
@@ -54,7 +53,6 @@ def test_duplicate_rotation_start_does_not_retrigger_carla(client, rotation_rece
     assert rotation_receiver.count() == 1
 
 
-@pytest.mark.xfail(strict=True, reason="DEF-M04: 'complete' is accepted with 200 when no rotation was started")
 def test_rotation_complete_requires_started(client, rotation_receiver):
     # REQ: 'complete' is only valid for a rotation that was started.
     status, _ = client.post("/leader_rotation", COMPLETE)
@@ -62,7 +60,6 @@ def test_rotation_complete_requires_started(client, rotation_receiver):
     assert client.members() == ORIGINAL
 
 
-@pytest.mark.xfail(strict=True, reason="DEF-M05: any status string (e.g. 'banana') is accepted with 200")
 def test_rejects_unknown_rotation_status(client, rotation_receiver):
     # REQ: status must be one of started / complete / failed.
     status, _ = client.post("/leader_rotation", {**START, "status": "banana"})

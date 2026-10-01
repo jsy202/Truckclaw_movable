@@ -309,6 +309,13 @@ class Handler(BaseHTTPRequestHandler):
                 old_l = body.get("old_leader", "truck0")
                 new_l = body.get("new_leader", "truck1")
                 status = body.get("status", "started")
+                current = _leader_rotation.get("status")
+                if status not in ("started", "complete", "failed"):
+                    return self._err(400, f"unknown leader_rotation status: {status}")
+                if status == "started" and current == "started":
+                    return self._ok(_leader_rotation)  # 진행 중 재요청: 멱등 (CARLA 재트리거 없음)
+                if status in ("complete", "failed") and current != "started":
+                    return self._err(409, f"cannot mark leader_rotation {status}: current status is {current}")
                 _leader_rotation.update({
                     "old_leader": old_l,
                     "new_leader": new_l,
