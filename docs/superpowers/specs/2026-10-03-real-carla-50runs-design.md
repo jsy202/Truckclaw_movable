@@ -37,7 +37,7 @@ A run passes only when all of these hold:
 3. Transition: truck0 leaves the main membership in `GAP`, truck1 becomes the actual main leader with `LeadNavigator`, and truck2 remains its follower with the correct platoon reference.
 4. Maneuver: the production 12.0 m GAP criterion is observed for 10 ticks; truck0 reaches the adjacent lane with lateral offset greater than 3.0 m; `SLOWDOWN` reaches at least `NORMAL_FOLLOW_GAP_M + 10.0 = 25.0 m` behind truck2 without the 8000-tick forced path; `REJOIN` returns to the original lane with lateral offset below 0.8 m.
 5. Final logical state: membership is `[truck1, truck2, truck0]`; truck1 is leader; truck2 and truck0 have follower controllers referencing that platoon.
-6. Final physical state: all actors are alive on the same road/lane, forward-axis projections give strict order `truck1 → truck2 → truck0`, all remain moving after a fixed 2.0 simulation-second settle interval, and no collision is recorded.
+6. Final physical state: all actors are alive in the same lane corridor (equal CARLA `lane_id`; `road_id` may differ when the platoon straddles connected OpenDRIVE road segments), forward-axis projections give strict order `truck1 → truck2 → truck0`, all remain moving after a fixed 2.0 simulation-second settle interval, and no collision is recorded.
 7. Final state: scenario state is `DONE`; no timeout, crash, forced state transition, or validation abort occurred.
 
 `DONE` alone never passes a run. Thresholds above are production constants and are not changed based on results.

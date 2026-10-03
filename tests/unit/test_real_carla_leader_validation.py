@@ -98,6 +98,17 @@ def test_evaluator_requires_original_initial_roles():
     assert result["checks"]["initial_state"] is False
 
 
+def test_same_lane_across_connected_road_segments_is_not_rejected():
+    """Catch treating CARLA road-segment ids as part of lane identity for a long platoon."""
+    initial, events, final = good_leader_evidence()
+    final["actors"]["truck0"]["road_id"] = 36
+    final["actors"]["truck1"]["road_id"] = 1149
+    final["actors"]["truck2"]["road_id"] = 1149
+    result = evaluate_leader(initial, events, final)
+    assert result["checks"]["same_final_lane"] is True
+    assert result["passed"] is True
+
+
 def test_atomic_json_never_leaves_temporary_file(tmp_path):
     path = tmp_path / "evidence" / "result.json"
     atomic_write_json(path, {"passed": False, "run": 3})
