@@ -1,7 +1,10 @@
 import json
 
 import pytest
+from unittest.mock import MagicMock
 
+from fakes.carla_stub import load_scenario_module
+from validation.real_carla_50runs.tools.scenario_recorder import ScenarioRecorder
 from validation.real_carla_50runs.tools.leader_validation import (
     atomic_write_json,
     evaluate_leader,
@@ -120,3 +123,47 @@ def test_summary_preserves_failures_and_uses_interpolated_percentiles():
     summary = summarize_results(results)
     assert summary["runs"] == 3 and summary["successes"] == 2 and summary["failures"] == 1
     assert summary["timing"] == {"mean": 4.0, "p50": 4.0, "p95": 5.8, "max": 6.0}
+
+
+def test_coordinator_records_only_one_accepted_trigger(monkeypatch):
+    scenario = load_scenario_module(monkeypatch)
+    coord = scenario.LeaderRotationCoordinator(MagicMock(), MagicMock(), MagicMock(), migrator=None)
+    recorder = MagicMock()
+    coord.validation_recorder = recorder
+    coord.trigger()
+    coord.trigger()
+    recorder.record.assert_called_once_with("trigger", accepted=True)
+
+
+def test_recorder_preserves_rotation_milestones_and_waits_for_settle(tmp_path):
+    initial, events, final = good_leader_evidence()
+    current = dict(initial)
+    recorder = ScenarioRecorder(tmp_path, lambda: current, ready_s=5.0, settle_s=2.0)
+    recorder.capture_initial()
+    assert recorder.maybe_ready(4.99) is False
+    assert recorder.maybe_ready(5.0) is True
+    for event in events:
+        current.clear()
+        current.update(final if event["event"] == "done" else initial)
+        recorder.record(event["event"], **{k: v for k, v in event.items() if k not in ("event", "since_trigger_s")})
+    assert recorder.poll(6.99) is False
+    assert recorder.poll(7.0) is True
+    saved = json.loads((tmp_path / "transition_events.json").read_text())
+    assert [item["event"] for item in saved] == [item["event"] for item in events]
+    assert json.loads((tmp_path / "result.json").read_text())["passed"] is True
+
+
+def test_collision_event_makes_rotation_fail(tmp_path):
+    initial, events, final = good_leader_evidence()
+    current = dict(initial)
+    recorder = ScenarioRecorder(tmp_path, lambda: current, ready_s=0.0, settle_s=2.0)
+    recorder.capture_initial()
+    recorder.record_collision("truck0", 44, 6.2)
+    for event in events:
+        current.clear()
+        current.update(final if event["event"] == "done" else initial)
+        recorder.record(event["event"], **{k: v for k, v in event.items() if k not in ("event", "since_trigger_s")})
+    assert recorder.poll(2.0) is True
+    result = json.loads((tmp_path / "result.json").read_text())
+    assert result["passed"] is False
+    assert "collision_free" in result["failure_reasons"]
