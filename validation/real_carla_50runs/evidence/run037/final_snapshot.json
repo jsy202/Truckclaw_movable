@@ -1,0 +1,103 @@
+{
+  "actors": {
+    "truck0": {
+      "actor_id": 120,
+      "alive": true,
+      "lane_id": -3,
+      "location": {
+        "x": 180.0636,
+        "y": 137.0751,
+        "z": 0.0009
+      },
+      "road_id": 36,
+      "rotation": {
+        "pitch": -0.1725,
+        "roll": 0.0024,
+        "yaw": -1.1124
+      },
+      "speed_kmh": 22.1028,
+      "type_id": "vehicle.carlamotors.carlacola",
+      "velocity": {
+        "x": 6.1384,
+        "y": -0.1235,
+        "z": 0.0
+      }
+    },
+    "truck1": {
+      "actor_id": 121,
+      "alive": true,
+      "lane_id": -3,
+      "location": {
+        "x": 215.412,
+        "y": 136.8119,
+        "z": -0.0016
+      },
+      "road_id": 1149,
+      "rotation": {
+        "pitch": 0.0003,
+        "roll": -0.0004,
+        "yaw": 0.2358
+      },
+      "speed_kmh": 18.0021,
+      "type_id": "vehicle.carlamotors.carlacola",
+      "velocity": {
+        "x": 5.0005,
+        "y": 0.0206,
+        "z": -0.0011
+      }
+    },
+    "truck2": {
+      "actor_id": 122,
+      "alive": true,
+      "lane_id": -3,
+      "location": {
+        "x": 199.2429,
+        "y": 136.7495,
+        "z": -0.0015
+      },
+      "road_id": 1149,
+      "rotation": {
+        "pitch": -0.0031,
+        "roll": -0.002,
+        "yaw": 0.1256
+      },
+      "speed_kmh": 18.008,
+      "type_id": "vehicle.carlamotors.carlacola",
+      "velocity": {
+        "x": 5.0022,
+        "y": 0.0235,
+        "z": -0.0011
+      }
+    }
+  },
+  "collisions": [],
+  "controllers": {
+    "truck0": {
+      "platoon": "main",
+      "type": "FollowerController"
+    },
+    "truck1": {
+      "platoon": "main",
+      "type": "LeadNavigator"
+    },
+    "truck2": {
+      "platoon": "main",
+      "type": "FollowerController"
+    }
+  },
+  "detached_members": [],
+  "leader": "truck1",
+  "main_members": [
+    "truck1",
+    "truck2",
+    "truck0"
+  ],
+  "physical_order": [
+    "truck1",
+    "truck2",
+    "truck0"
+  ],
+  "scenario_state": "DONE",
+  "simulation_platoon_count": 1,
+  "trigger_count": 1
+}

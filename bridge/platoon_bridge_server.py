@@ -309,6 +309,21 @@ class Handler(BaseHTTPRequestHandler):
                 old_l = body.get("old_leader", "truck0")
                 new_l = body.get("new_leader", "truck1")
                 status = body.get("status", "started")
+                current = _leader_rotation.get("status")
+                if status not in ("started", "complete", "failed"):
+                    return self._err(400, f"unknown leader_rotation status: {status}")
+                if status == "started" and current == "started":
+                    return self._ok(_leader_rotation)  # 진행 중 재요청: 멱등 (CARLA 재트리거 없음)
+                if status == "started":
+                    # 식별자 검증: old_leader = 현재 선두, new_leader = 바로 다음 차량 (_promote_new_leader 의미와 동일)
+                    ids = [m["vehicle_id"] for m in _platoons.get("platoon_a", {}).get("members", [])]
+                    old_vid, new_vid = f"platoon_a_{old_l}", f"platoon_a_{new_l}"
+                    if old_vid not in ids or new_vid not in ids:
+                        return self._err(404, f"unknown vehicle in leader_rotation: {old_l} -> {new_l}")
+                    if ids[0] != old_vid or len(ids) < 2 or ids[1] != new_vid:
+                        return self._err(409, f"{old_l} is not the current leader or {new_l} is not next in line")
+                if status in ("complete", "failed") and current != "started":
+                    return self._err(409, f"cannot mark leader_rotation {status}: current status is {current}")
                 _leader_rotation.update({
                     "old_leader": old_l,
                     "new_leader": new_l,
@@ -316,12 +331,12 @@ class Handler(BaseHTTPRequestHandler):
                     "updated_at": _now(),
                 })
                 if status == "started":
-                    # 브리지 논리 상태: 선두 교체 반영
-                    _promote_new_leader(f"platoon_a_{old_l}")
-                    # CARLA 18803 트리거
+                    # CARLA 18803 트리거 (논리 상태는 물리 합류 완료 후 반영)
                     _notify_carla_leader_rotation(old_l, new_l)
                     print(f"[bridge] leader_rotation 시작: {old_l} → {new_l}")
                 elif status == "complete":
+                    # 브리지 논리 상태: 물리 후미 합류 완료 시점에 선두 교체 반영
+                    _promote_new_leader(f"platoon_a_{old_l}")
                     _leader_rotation["status"] = "complete"
                     print(f"[bridge] leader_rotation 완료: {new_l} 신규 선두")
                 self._ok(_leader_rotation)

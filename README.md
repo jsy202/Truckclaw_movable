@@ -670,6 +670,141 @@ rm .transfer/openclaw_base.tar
 python3 openclaw_migration/replicator.py --ensure-base
 ```
 
+
+---
+
+## Post-project Agent Migration & Leader Rotation Verification
+
+> 이 섹션은 **연구 종료 후(2026-10)** 수행한 검증 작업이다.
+> 위의 내용(설계, 실행 방법, 시연 흐름)은 연구 당시 결과이며, 이번에 재실행하거나 수정하지 않았다.
+> 아래에 적은 결함은 **이번 검증에서 처음 발견한 것**이다. 연구 당시 코드는 tag `research-baseline`(`59f35ea`)에 보존되어 있다.
+
+### 검증 목적
+
+선두 교체는 두 가지가 맞물려 일어난다.
+
+- OpenClaw 세션 이전(Docker): 논리·소프트웨어 측
+- CARLA 후미 합류: 물리 측
+
+이 검증은 두 측면의 **상태가 어긋나지 않는지**, 그리고 **이전 실패, 지연, 중복 요청이 안전하게 처리되는지**를 CARLA와 Docker 없이 확인한다.
+
+### 테스트 구조
+
+```text
+[Production]  scenario coordinator ─▶ LeaderMigrator ─▶ docker save/load/run
+              agent/scenario ─▶ bridge /leader_rotation ─▶ CARLA :18803
+[Test]        coordinator (carla 모듈 stub) ─▶ 실제 LeaderMigrator ─▶ FakeDocker (subprocess.run 대체)
+              pytest ─▶ 실제 bridge Handler (in-process) ─▶ FakeRotationReceiver
+```
+
+production 코드에 테스트용 분기는 넣지 않았다. Docker 호출은 테스트에서만 `subprocess.run`을 monkeypatch해 가로챈다.
+
+### 발견한 결함 (실제 실행으로 재현)
+
+| ID | 결함 | 상태 |
+|---|---|---|
+| DEF-M01 | bridge가 `started` 시점에 truck1을 선두로 승격. 이 시점에는 물리 이동과 agent 이전이 아직 없음 | 수정 `0c4a530` |
+| DEF-M02 | 선두 교체가 실패해도 bridge는 truck1을 선두로 유지 | 수정 `0c4a530` |
+| DEF-M03 | `started`가 중복되면 CARLA trigger 중복. 문서화된 흐름(agent와 시나리오가 각각 started 전송)에서 항상 발생 | 수정 `237f619` |
+| DEF-M04 / M05 | started 없이 `complete`를 받음, 임의 status 문자열을 받음 | 수정 `237f619` |
+| DEF-M06 | 존재하지 않는 old_leader로도 CARLA trigger | 수정 `35bd68e` |
+| DEF-M07 | OpenClaw 이전이 실패하면 coordinator가 MIGRATE에서 영구 대기. `wait(0)`이 "진행 중"과 "실패"를 구분하지 못함 | 수정 `89237fd` |
+| DEF-M08 | MIGRATE timeout이 없어 docker 명령이 멈추면 영구 대기 | 수정 `89237fd` (기존 120 s 재사용) |
+| DEF-M09 | 이전 "성공" 판정이 `docker run -d`의 returncode뿐이고 gateway health는 확인하지 않음 | **미수정, XFAIL (DEFERRED)** |
+
+추가로 Truckclaw-improve에서 찾은 bridge transfer 결함 11건이 이 저장소에도 그대로 있다. 실행으로 재현했고, 이 저장소에서는 수정하지 않았다(`validation/evidence/inherited_transfer_defects.txt`).
+
+### 결과 (2026-10-01, 로컬)
+
+| 테스트 | PASS | XFAIL | FAILED |
+|---|---|---|---|
+| 23 | 22 | 1 (DEF-M09) | 0 |
+
+- 10회 연속 실행에서 매회 같은 결과였다.
+- 같은 테스트를 baseline 소스에 실행하면 10 failed, 13 passed다. 실패한 10건은 위의 결함 테스트들이다.
+
+실행: `pip install -r requirements-test.txt && python3 -m pytest`
+
+CI는 `.github/workflows/test.yml`에 있다. 아직 push하지 않아 **GitHub에서 실행된 기록은 없다.**
+
+### Limitations
+
+- CARLA 물리 단계(GAP 이후)는 실행하지 않았다. 실제 Docker 및 Discord와 함께 확인하지도 않았다.
+- MIGRATE timeout 뒤에도 migration 스레드는 취소되지 않는다. 늦게 성공하면 신규 컨테이너가 기동될 수 있다.
+- 세션 tar에는 토큰이 평문으로 들어간다(설계상 의도).
+- 위 README의 `/leader_rotation` curl 예시는 `old_truck_id`/`new_truck_id` 키를 쓴다. bridge는 `old_leader`/`new_leader`를 읽기 때문에, 예시는 기본값(truck0→truck1)으로 동작하는 것이다(정적 확인).
+
+문서: [validation/](validation/) — requirements, interface_spec, state_machine, test_cases, traceability_matrix, test_report, limitations
+
+---
+
+## Post-project Real-CARLA Validation
+
+Logical and physical state consistency was observed in all 50 runs under the tested fixed scenario.
+
+### Test Environment
+
+- **Simulator**: CARLA 0.9.13 (Python 3.7.17 client)
+- **Host OS**: Ubuntu 22.04 LTS (Linux 6.8.0-138-generic)
+- **Hardware**: NVIDIA GeForce RTX 3060
+- **Rendering**: `-RenderOffScreen` (실제 CARLA 물리 시뮬레이션이며 디스플레이 출력만 생략)
+- **Map**: Town06
+- **Vehicle Blueprint**: `vehicle.carlamotors.carlacola` (기존 blueprint fallback)
+
+### Validation Criteria
+
+Leader Change 동작 완료 판정은 단순 `DONE` 상태 도달이 아닌 아래 invariant를 동시에 만족해야 합니다:
+- 최종 시나리오 상태: `DONE`
+- 선두 제어권 승계: `truck1`이 선두 컨트롤러(`LeadNavigator`)로 정상 승계
+- 최종 플래툰 멤버십: `[truck1, truck2, truck0]` 순서로 재합류
+- 차선 복귀: `truck0`이 기존 주행 차선으로 복귀 (lateral offset < 0.8 m)
+- 물리적 순서 일치: CARLA 3차원 공간상 종방향 위치가 `truck1 → truck2 → truck0` 순서로 일치
+- 생존 및 충돌: 전 차량 actor 생존 및 무충돌 (collision count 0)
+
+### Results
+
+| Metric | Result |
+|---|---:|
+| Runs | 50 |
+| Success | 50/50 |
+| Logical / Physical Consistency | 50/50 |
+| Timeout | 0 |
+| Crash | 0 |
+| Cleanup Failure | 0 |
+
+*참고: OpenClaw Migration은 `openclaw:local` 이미지, Discord gateway, 소스 에이전트 환경 부재로 `Not tested`로 분리되었으며, CARLA 물리 선두 교체 결과에 합산되지 않습니다. 또한 트리거 멱등 처리로 50회 실행 모두 유효 트리거 1회(duplicate trigger count: 0)였습니다.*
+
+### Timing
+
+| Phase | Mean | P50 (Median) | P95 | Max | Min |
+|---|---:|---:|---:|---:|---:|
+| `trigger → migrate` | 0.003606 s | 0.003538 s | 0.003976 s | 0.005020 s | 0.003212 s |
+| `trigger → split` (logical_transition) | 0.010610 s | 0.010270 s | 0.012122 s | 0.013104 s | 0.009320 s |
+| `trigger → lane_change` | 1.215890 s | 1.208961 s | 1.369022 s | 1.402861 s | 1.070818 s |
+| `trigger → slowdown` | 8.267754 s | 8.226030 s | 8.959305 s | 9.635556 s | 7.685227 s |
+| `trigger → rejoin` | 9.869590 s | 9.796522 s | 10.648178 s | 11.605610 s | 9.144819 s |
+| `trigger → done` | 9.871707 s | 9.798514 s | 10.650220 s | 11.608280 s | 9.146655 s |
+
+### Validation Defect Found
+
+- **VAL-L01 (OpenDRIVE road segment 경계에서의 차선 오판)**:
+  - **현상**: 초기 smoke run에서 선두 교체 및 재합류 기동을 정상 완료했으나, 플래툰이 road 36과 road 1149 경계를 걸칠 때 동일 직선 차선(lane -3)임에도 evaluator가 차선 불일치로 오인하여 FAIL 판정 (`evidence_before_fix/`에 원본 보존).
+  - **원인**: `same_final_lane` 판정에서 `(road_id, lane_id)` 쌍의 단순 일치를 요구하여 연속된 동일 물리 차선의 segment boundary 분할을 감안하지 못함.
+  - **수정**: 동일 차선 검증을 CARLA `lane_id` 비교, 횡방향 오차(< 0.8 m), 공간 종방향 ordering 검증의 조합으로 정밀화.
+  - **회귀 검증**: `test_same_lane_across_connected_road_segments_is_not_rejected` 통과 후 본 50회 검증에서 50/50 완료 확인.
+
+### Limitations
+
+- **Fixed Condition**: Town06 단일 고정 spawn, 단일 목표 속도, 단일 날씨 조건에서만 검증되었습니다.
+- **Single Scenario Configuration**: 3대 플래툰 단일 설정입니다.
+- **CARLA Simulation**: CARLA 0.9.13 시뮬레이션 환경 검증이며 실차 검증이 아닙니다.
+- **Off-screen Rendering**: `-RenderOffScreen` 모드 시뮬레이션입니다.
+- **Blueprint Fallback**: `vehicle.carlamotors.carlacola` 모델을 사용했습니다.
+- **OpenClaw Migration Not tested**: 환경 부재로 Migration은 테스트 대상에서 제외되었습니다.
+- **Generalization 미검증**: 다양한 환경에 대한 일반화는 검증되지 않았습니다.
+
+자세한 실험 데이터, 통계 및 감사 내역은 [validation/real_carla_50runs/validation_report.md](validation/real_carla_50runs/validation_report.md)를 참고하십시오.
+
 ---
 
 ## 라이선스

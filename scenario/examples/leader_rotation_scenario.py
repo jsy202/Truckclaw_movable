@@ -61,6 +61,7 @@ TARGET_GAP_M        = 13.0
 PLATOON_SPACING_M   = 20.0                                   # ⚠️ 18 -> 20
 LANE_STEP_COMPLETE_M = 0.9
 GAP_STABLE_TICKS    = 10                                     # ⚠️ 50 -> 10 (빠른 전환)
+MIGRATE_TIMEOUT_S   = 120.0                                  # LeaderMigrator.wait() 기본값과 동일
 
 BRIDGE_URL      = "http://127.0.0.1:18801"
 TRIGGER_PORT    = 18802
@@ -297,10 +298,13 @@ class LeaderRotationCoordinator:
         self._target_lane_wpt = None
         self._rejoin_target_lane_wpt = None
         self.last_status = "idle"
+        self.validation_recorder = None
 
     def trigger(self):
-        if self.state == RotState.CRUISE:
+        if self.state == RotState.CRUISE and not self.triggered:
             self.triggered = True
+            if self.validation_recorder:
+                self.validation_recorder.record("trigger", accepted=True)
 
     def camera_target(self):
         if self._v and self.state not in (RotState.CRUISE, RotState.MIGRATE):
@@ -316,6 +320,10 @@ class LeaderRotationCoordinator:
                 self.state = RotState.GAP
             elif self.migrator is None:
                 self.state = RotState.GAP
+            elif self.migrator.finished():
+                self._abort_migration("OpenClaw 이전 실패")
+            elif time.monotonic() - self._migrate_started > MIGRATE_TIMEOUT_S:
+                self._abort_migration(f"OpenClaw 이전 {MIGRATE_TIMEOUT_S:g}s 초과")
         elif self.state == RotState.GAP:    self._update_gap()
         elif self.state == RotState.LC:     self._update_lc()
         elif self.state == RotState.SLOWDOWN: self._update_slowdown()
@@ -324,13 +332,24 @@ class LeaderRotationCoordinator:
     def _start_migrate(self):
         print("\n[rotation] 선두 교체 트리거!")
         _bridge_post("/leader_rotation", {"old_leader":"truck0","new_leader":"truck1","status":"started"})
+        if self.validation_recorder:
+            self.validation_recorder.record("migrate")
         
         if self.migrator:
+            self._migrate_started = time.monotonic()
             self.migrator.migrate(blocking=False)
             self.state = RotState.MIGRATE
         else:
             print("[rotation] migrator 없음 — OpenClaw 이전 스킵")
             self.state = RotState.GAP
+
+    def _abort_migration(self, reason):
+        # 물리 이동 전(MIGRATE)이므로 truck0가 그대로 선두 — CRUISE로 복귀하고 실패를 브리지에 보고
+        print(f"[rotation] {reason} → 선두 교체 중단 (truck0 선두 유지)")
+        _bridge_post("/leader_rotation", {"old_leader":"truck0","new_leader":"truck1","status":"failed"})
+        self.triggered = False
+        self.state = RotState.CRUISE
+        self.last_status = reason
 
     def _update_gap(self):
         if self._v is None:
@@ -357,6 +376,8 @@ class LeaderRotationCoordinator:
 
             print(f"[rotation] truck0 분리. truck1이 새로운 리더로 승격됨 (정속 유지).")
             self.last_status = "gap_opening"
+            if self.validation_recorder:
+                self.validation_recorder.record("logical_transition")
             return
 
         # truck1(새 리더)과의 간격 확보
@@ -377,6 +398,8 @@ class LeaderRotationCoordinator:
         self.last_status = f"gap={gap:.1f}/12.0m ok={self._gap_ok}"
         if self._gap_ok >= GAP_STABLE_TICKS:
             print(f"[rotation] 간격 확보 완료 ({gap:.1f}m) → LC 시작")
+            if self.validation_recorder:
+                self.validation_recorder.record("gap_ready", gap_m=float(gap), stable_ticks=self._gap_ok)
             self._start_lc()
 
     def _start_lc(self):
@@ -420,6 +443,8 @@ class LeaderRotationCoordinator:
             
             self.state = RotState.SLOWDOWN
             self._ticks = 0
+            if self.validation_recorder:
+                self.validation_recorder.record("lane_change_complete", lateral_m=float(lat_dist), forced=False)
             return
 
         # 타임아웃 대폭 확대 (충분히 기다림)
@@ -427,6 +452,8 @@ class LeaderRotationCoordinator:
             print(f"[rotation] LC 타임아웃 경고 → SLOWDOWN 강제 전환")
             self.state = RotState.SLOWDOWN
             self._ticks = 0
+            if self.validation_recorder:
+                self.validation_recorder.record("lane_change_complete", lateral_m=float(lat_dist), forced=True)
 
         self.last_status = f"LC lat={lat_dist:.1f} ticks={self._ticks}"
 
@@ -448,6 +475,12 @@ class LeaderRotationCoordinator:
         # 충분한 여유 간격 확보 후 합류 (NORMAL_FOLLOW_GAP_M + 여유)
         if off >= NORMAL_FOLLOW_GAP_M + 10.0 or self._ticks > 8000:
             print(f"[rotation] 후방 위치 확보 (off={off:.1f}m) → REJOIN 시작")
+            if self.validation_recorder:
+                self.validation_recorder.record(
+                    "slowdown_complete",
+                    behind_tail_m=float(off),
+                    forced=off < NORMAL_FOLLOW_GAP_M + 10.0,
+                )
             self._ticks = 0
             self.state = RotState.REJOIN
 
@@ -484,6 +517,8 @@ class LeaderRotationCoordinator:
         # 원래 차선 복귀 완료 판정 (횡방향 오차 0.8m 이내로 강화 - 안정성 확보)
         if (ego_wpt.lane_id == self._original_lane_id[1] and lat_off < 0.8):
             print(f"[rotation] 원래 차선 복귀 완료 (lat={lat_off:.1f}m) → FINALIZING")
+            if self.validation_recorder:
+                self.validation_recorder.record("rejoin", lateral_m=float(lat_off))
             self._finalize_join()
 
     def _finalize_join(self):
@@ -500,6 +535,8 @@ class LeaderRotationCoordinator:
         _bridge_post("/leader_rotation", {"old_leader":"truck0","new_leader":"truck1","status":"complete"})
         _rotation_complete_event.set()
         self.state = RotState.DONE
+        if self.validation_recorder:
+            self.validation_recorder.record("done")
         print("[rotation] >>> 선두 교체 및 후미 합류 완료!")
 
     def status_line(self):
@@ -556,6 +593,9 @@ def main():
     p = argparse.ArgumentParser()
     p.add_argument("--no-openclaw",    action="store_true")
     p.add_argument("--auto-trigger-s", type=float, default=0.0)
+    p.add_argument("--validation-evidence-dir", default="")
+    p.add_argument("--validation-ready-s", type=float, default=5.0)
+    p.add_argument("--validation-settle-s", type=float, default=2.0)
     args = p.parse_args()
 
     # ── watch 스크립트 로그 초기화 (이전 실행 잔존 방지) ─────────────────────
@@ -627,6 +667,24 @@ def main():
     camera = SmoothCamera(sim.spectator)
     kb     = KeyInput()
 
+    validation_recorder = None
+    if args.validation_evidence_dir:
+        validation_tools = _PROJECT / "validation" / "real_carla_50runs" / "tools"
+        sys.path.insert(0, str(validation_tools))
+        from scenario_recorder import ScenarioRecorder
+        from leader_validation import platoon_snapshot
+        vehicles = {f"truck{i}": platoon[i] for i in range(PLATOON_SIZE)}
+        names = {id(vehicle): name for name, vehicle in vehicles.items()}
+        validation_recorder = ScenarioRecorder(
+            args.validation_evidence_dir,
+            lambda: platoon_snapshot(coord, sim, names),
+            ready_s=args.validation_ready_s,
+            settle_s=args.validation_settle_s,
+        )
+        coord.validation_recorder = validation_recorder
+        validation_recorder.capture_initial()
+        validation_recorder.attach_collision_sensors(sim.world, vehicles, carla)
+
     step = 0; auto_triggered = False; cleanup_done = False
 
     def speeds():
@@ -658,6 +716,9 @@ def main():
         while True:
             if step * DT > 600.0: break
 
+            if validation_recorder:
+                validation_recorder.maybe_ready(step * DT)
+
             key = kb.read()
             if key.lower() == "l" and coord.state == RotState.CRUISE:
                 print("\n[키] L — 선두 교체 트리거"); coord.trigger()
@@ -674,6 +735,9 @@ def main():
             sim.run_step(mode="sample" if step % SAMPLING_RATE == 0 else "control")
             sim.tick()
             camera.update(coord.camera_target())
+
+            if validation_recorder and validation_recorder.poll(step * DT):
+                break
 
             if step % 100 == 0:
                 d_status = _get_docker_status()
@@ -718,6 +782,10 @@ def main():
 
             step += 1
     finally:
+        if validation_recorder:
+            if not validation_recorder.finished:
+                validation_recorder.abort("scenario_exit_before_validation_complete")
+            validation_recorder.close()
         kb.restore()
         sim.release_synchronous()
         # watch 스크립트 로그 초기화 (Ctrl+C 후 재시작 시 잔존 방지)

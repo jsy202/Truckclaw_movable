@@ -1,0 +1,12 @@
+# Current tests (code at 05e1b5a) run with --runxfail against research-baseline (59f35ea) sources, 2026-10-01
+FAILED tests/integration/test_agent_migration.py::test_migration_success_requires_new_agent_ready
+FAILED tests/integration/test_leader_rotation.py::test_leader_not_promoted_before_physical_rotation_completes
+FAILED tests/integration/test_leader_rotation.py::test_failed_rotation_keeps_original_leader
+FAILED tests/integration/test_leader_rotation.py::test_duplicate_rotation_start_does_not_retrigger_carla
+FAILED tests/integration/test_leader_rotation.py::test_rotation_complete_requires_started
+FAILED tests/integration/test_leader_rotation.py::test_rejects_unknown_rotation_status
+FAILED tests/integration/test_leader_rotation.py::test_rejects_unknown_leader_identity
+FAILED tests/integration/test_leader_rotation.py::test_coordinator_leaves_migrate_when_migration_fails
+FAILED tests/integration/test_leader_rotation.py::test_coordinator_times_out_hung_migration
+FAILED tests/integration/test_leader_rotation.py::test_rejects_rotation_when_new_leader_is_not_next_in_line
+10 failed, 13 passed in 6.23s

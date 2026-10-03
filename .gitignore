@@ -32,3 +32,6 @@ venv/
 .openclaw-truck1/
 .openclaw-truck2/
 .transfer/
+
+# 테스트
+.pytest_cache/

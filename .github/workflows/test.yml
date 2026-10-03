@@ -1,0 +1,25 @@
+name: tests
+
+# CARLA/Docker-free verification: bridge leader-rotation contract, coordinator
+# state machine (CARLA stubbed) and agent migration (docker replaced by FakeDocker).
+on:
+  push:
+  pull_request:
+
+jobs:
+  pytest:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"  # only version verified locally
+      - name: Install test dependencies
+        run: python -m pip install -r requirements-test.txt
+      - name: Syntax check
+        run: python -m compileall -q bridge openclaw_migration scenario tools tests
+      - name: Unit tests
+        run: python -m pytest tests/unit -v
+      - name: Integration tests (fake bridge peers, FakeDocker, CARLA stub)
+        run: python -m pytest tests/integration -v
