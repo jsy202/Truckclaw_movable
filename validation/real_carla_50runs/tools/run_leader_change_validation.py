@@ -32,13 +32,27 @@ def ensure_port_free(host, port):
 
 
 def stop_process(process, timeout=20.0):
-    if process is None or process.poll() is not None:
+    if process is None:
         return
-    os.killpg(process.pid, signal.SIGTERM)
-    try:
-        process.wait(timeout)
-    except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL); process.wait()
+    process_group = process.pid
+
+    def group_alive():
+        try:
+            os.killpg(process_group, 0)
+            return True
+        except ProcessLookupError:
+            return False
+
+    if group_alive(): os.killpg(process_group, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while group_alive() and time.monotonic() < deadline:
+        process.poll(); time.sleep(0.05)
+    if group_alive():
+        os.killpg(process_group, signal.SIGKILL)
+        kill_deadline = time.monotonic() + 5.0
+        while group_alive() and time.monotonic() < kill_deadline:
+            process.poll(); time.sleep(0.05)
+    if process.poll() is None: process.wait(timeout=5.0)
 
 
 def wait_until(predicate, timeout, description, interval=0.25):
