@@ -1,0 +1,2 @@
+run,ready_to_trigger_s,trigger_to_migrate_s,trigger_to_split_s,trigger_to_lane_change_s,trigger_to_slowdown_s,trigger_to_rejoin_s,trigger_to_done_s
+1,0.094345,0.003494,0.00993,1.07324,7.678071,9.299535,9.301246

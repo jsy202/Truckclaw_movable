@@ -1,0 +1,100 @@
+{
+  "ready": true,
+  "simulation_time_s": 5.0,
+  "snapshot": {
+    "actors": {
+      "truck0": {
+        "actor_id": 120,
+        "alive": true,
+        "lane_id": -3,
+        "location": {
+          "x": 99.6351,
+          "y": 136.3208,
+          "z": -0.0017
+        },
+        "road_id": 575,
+        "rotation": {
+          "pitch": 0.0082,
+          "roll": -0.0002,
+          "yaw": 0.4088
+        },
+        "speed_kmh": 17.995,
+        "type_id": "vehicle.carlamotors.carlacola",
+        "velocity": {
+          "x": 4.9985,
+          "y": 0.032,
+          "z": 0.0006
+        }
+      },
+      "truck1": {
+        "actor_id": 121,
+        "alive": true,
+        "lane_id": -3,
+        "location": {
+          "x": 81.4242,
+          "y": 136.2529,
+          "z": 0.0016
+        },
+        "road_id": 575,
+        "rotation": {
+          "pitch": -0.2227,
+          "roll": 0.0042,
+          "yaw": 0.4694
+        },
+        "speed_kmh": 19.7457,
+        "type_id": "vehicle.carlamotors.carlacola",
+        "velocity": {
+          "x": 5.4849,
+          "y": 0.0155,
+          "z": -0.0
+        }
+      },
+      "truck2": {
+        "actor_id": 122,
+        "alive": true,
+        "lane_id": -3,
+        "location": {
+          "x": 63.5768,
+          "y": 136.1878,
+          "z": -0.0006
+        },
+        "road_id": 575,
+        "rotation": {
+          "pitch": -0.0634,
+          "roll": -0.0037,
+          "yaw": 0.2269
+        },
+        "speed_kmh": 22.3039,
+        "type_id": "vehicle.carlamotors.carlacola",
+        "velocity": {
+          "x": 6.1955,
+          "y": 0.0307,
+          "z": -0.0
+        }
+      }
+    },
+    "controllers": {
+      "truck0": {
+        "platoon": "main",
+        "type": "LeadNavigator"
+      },
+      "truck1": {
+        "platoon": "main",
+        "type": "FollowerController"
+      },
+      "truck2": {
+        "platoon": "main",
+        "type": "FollowerController"
+      }
+    },
+    "detached_members": [],
+    "leader": "truck0",
+    "main_members": [
+      "truck0",
+      "truck1",
+      "truck2"
+    ],
+    "scenario_state": "CRUISE",
+    "simulation_platoon_count": 1
+  }
+}

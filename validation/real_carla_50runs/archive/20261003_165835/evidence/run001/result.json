@@ -1,0 +1,13 @@
+{
+  "checks": {},
+  "cleanup_failure": false,
+  "crash": false,
+  "exception": "TimeoutError: scenario readiness timeout",
+  "failure_reasons": [
+    "timeout"
+  ],
+  "passed": false,
+  "run": 1,
+  "timeout": true,
+  "timings": {}
+}
